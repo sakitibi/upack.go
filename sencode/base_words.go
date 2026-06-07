@@ -3,7 +3,6 @@ package sencode
 // パッケージ外部からアクセスできるように大文字で定義
 var BaseWords []string
 
-// TypeScriptの haire2.BASE_WORDS_1 に相当する固定データ
 var baseWords1 = []string{
 	"荒井想生",
 	"入江紗菜",
@@ -266,6 +265,16 @@ var baseWords1 = []string{
 	"神森恭吾",
 	"松村柑奈",
 	"黒木聡太郎",
+	"渋谷月兎",
+	"河上怜央",
+	"谷山琴春",
+	"溝口義之",
+	"若松愛実",
+	"松本啓志",
+	"𫝆井紬",
+	"浅田笑璃",
+	"磯部克仁",
+	"土居なな子",
 	"魔法",
 	"魔&法使い",
 	"魔&法少女",
@@ -295,6 +304,9 @@ var baseWords1 = []string{
 	"水晶",
 	"眠らし",
 	"呪文",
+}
+
+var baseWords2 = []string{
 	"回復",
 	"無敵",
 	"神秘的",
@@ -305,10 +317,6 @@ var baseWords1 = []string{
 	"魅了",
 	"静かに",
 	"こっそり",
-}
-
-// TypeScriptの haire2.BASE_WORDS_2 に相当する固定データ
-var baseWords2 = []string{
 	"ささやき",
 	"const",
 	"let",
@@ -574,6 +582,16 @@ var baseWords2 = []string{
 	"KyougoKamimori",
 	"KannaMatsumura",
 	"SoutarouKuroki",
+	"TsuuShibuya",
+	"ReoKawakami",
+	"KotohaTaniyama",
+	"YoshiyukiMizoguchi",
+	"ManamiWakamatsu",
+	"SatoshiMatsumoto",
+	"TsumugiImai",
+	"EmiriAsada",
+	"KatsuhitoIsobe",
+	"NanakoDoi",
 }
 
 // パッケージロード時に自動実行される初期化関数
