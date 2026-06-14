@@ -37,6 +37,16 @@ func main() {
 
 	// 3. 検証（間違った鍵を入れた場合の挙動テスト）
 	wrongKey := "wrong-key"
-	fakeBytes, _ := sencode.DecodeSEncode(encodedString, wrongKey)
-	fmt.Printf("間違った鍵でのデコード結果（ダミーデータ化）: %x...\n", fakeBytes[:10])
+	fakeBytes, err := sencode.DecodeSEncode(encodedString, wrongKey)
+	if err != nil {
+		// エラーが出た場合は安全に処理を逃がす
+		fmt.Printf("間違った鍵でのデコードに失敗しました（期待通りの挙動）: %v\n", err)
+	} else {
+		// エラーがなかった場合のみ、長さを考慮して出力
+		end := 10
+		if len(fakeBytes) < end {
+			end = len(fakeBytes)
+		}
+		fmt.Printf("間違った鍵でのデコード結果: %x...\n", fakeBytes[:end])
+	}
 }

@@ -2,6 +2,7 @@ package sencode
 
 // パッケージ外部からアクセスできるように大文字で定義
 var BaseWords []string
+var baseWords_tmp1 []string
 
 var baseWords1 = []string{
 	"荒井想生",
@@ -275,6 +276,16 @@ var baseWords1 = []string{
 	"浅田笑璃",
 	"磯部克仁",
 	"土居なな子",
+	"小寺彩織",
+	"藤井龍太",
+	"南井敦地",
+	"藤岡美結",
+	"西田充穂",
+	"鈴木勘太",
+	"乃生聡響",
+	"岩本拓賢",
+	"上田優葵",
+	"原田凜",
 	"魔法",
 	"魔&法使い",
 	"魔&法少女",
@@ -294,6 +305,9 @@ var baseWords1 = []string{
 	"雷",
 	"催眠",
 	"杖",
+}
+
+var baseWords2 = []string{
 	"ステッキ",
 	"魔&女の帽子",
 	"黒い洋服",
@@ -304,9 +318,6 @@ var baseWords1 = []string{
 	"水晶",
 	"眠らし",
 	"呪文",
-}
-
-var baseWords2 = []string{
 	"回復",
 	"無敵",
 	"神秘的",
@@ -592,10 +603,24 @@ var baseWords2 = []string{
 	"EmiriAsada",
 	"KatsuhitoIsobe",
 	"NanakoDoi",
+	"IoriKotera",
+	"RyuutaHujii",
+	"TaichiMinai",
+	"MiyuFujioka",
+	"MitsuhoNishida",
+}
+
+var baseWords3 = []string{
+	"KantaSuzuki",
+	"SatokiNoo",
+	"HirotakaIwamoto",
+	"YukiUeda",
+	"RinHarada",
 }
 
 // パッケージロード時に自動実行される初期化関数
 func init() {
 	// 2つの初期データを結合して BaseWords を完成させる
-	BaseWords = append(baseWords1, baseWords2...)
+	baseWords_tmp1 = append(baseWords1, baseWords2...)
+	BaseWords = append(baseWords_tmp1, baseWords3...)
 }
