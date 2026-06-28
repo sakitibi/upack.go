@@ -236,6 +236,7 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 		}
 
 		if phantomRng() < 0.25 {
+			phantomRng()
 			if mIdx < len(matches) && junkSet[matches[mIdx]] {
 				tokenCount++
 				mIdx++

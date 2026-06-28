@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"math"
 )
 
 type SEncodeManager struct {
@@ -143,42 +142,23 @@ func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
 	}
 }
 
-func jsToInt32(val float64) int32 {
-	if math.IsNaN(val) || math.IsInf(val, 0) || val == 0 {
-		return 0
-	}
-	rad := math.Mod(val, 4294967296.0)
-	if rad >= 2147483648.0 {
-		rad -= 4294967296.0
-	} else if rad < -2147483648.0 {
-		rad += 4294967296.0
-	}
-	return int32(rad)
-}
-
 func (m *SEncodeManager) GenerateSignature(data []byte) []byte {
-	var h1 float64 = -2128831035
-	var h2 float64 = 0x12345678
+	var h1 int32 = -2128831035 // 0x811c9dc5
+	var h2 int32 = 0x12345678
 
 	for i := 0; i < len(data); i++ {
-		dVal := float64(data[i])
-
-		h1Int := jsToInt32(h1) ^ jsToInt32(dVal)
-		h1 = float64(h1Int) * 16777619.0 // 0x01000193
-
-		h2Int := jsToInt32(h2) ^ jsToInt32(h1) ^ jsToInt32(dVal)
-		h2 = float64(h2Int) * 231548227.0 // 0x0dcd1943
+		d := int32(data[i])
+		h1 ^= d
+		h1 = h1 * 0x01000193
+		h2 ^= h1 ^ d
+		h2 = h2 * 0x0dcd1943
 	}
 
-	// 最後に >>> 0 (符号なし32bit化) を適用
-	finalH1 := uint32(jsToInt32(h1))
-	finalH2 := uint32(jsToInt32(h2))
-
 	sig := make([]byte, 16)
-	binary.BigEndian.PutUint32(sig[0:4], finalH1)
-	binary.BigEndian.PutUint32(sig[4:8], finalH2)
-	binary.BigEndian.PutUint32(sig[8:12], finalH1^finalH2)
-	binary.BigEndian.PutUint32(sig[12:16], finalH1+finalH2)
+	binary.BigEndian.PutUint32(sig[0:4], uint32(h1))
+	binary.BigEndian.PutUint32(sig[4:8], uint32(h2))
+	binary.BigEndian.PutUint32(sig[8:12], uint32(h1^h2))
+	binary.BigEndian.PutUint32(sig[12:16], uint32(h1+h2))
 	return sig
 }
 
@@ -196,7 +176,7 @@ func (m *SEncodeManager) ApplyLogic(val, xor, salt, step int) byte {
 	case 4:
 		return byte((val ^ (xor + salt)) & 0xFF)
 	case 5:
-		return byte((((val ^ salt) ^ step) & 0xFF) & 0xFF)
+		return byte(((val ^ salt) ^ step) & 0xFF)
 	default:
 		return byte((val ^ xor) & 0xFF)
 	}
