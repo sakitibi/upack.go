@@ -12,6 +12,7 @@ import (
 
 const DefaultSeparator = math.MaxInt32
 
+// EncodeSEncode はバイト列または文字列を暗号化難読化文字列に変換します。
 func EncodeSEncode(input interface{}, secretKey string, separator int) (string, error) {
 	if separator <= 0 {
 		separator = DefaultSeparator
@@ -106,7 +107,7 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 				hasMorphed = true
 			}
 			phantomVal := (currentXor ^ rollingOffset ^ totalProcessedSteps) & 0xFF
-			hexKey := fmt.Sprintf("x%02x", phantomVal)
+			hexKey := fmt.Sprintf("x%02x", phantomVal&0xFF)
 			result.WriteString(manager.ConversionMap[hexKey])
 			tokenCount++
 
@@ -121,7 +122,7 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 		rotated := ((int(b) << rot) | (int(b) >> (8 - rot))) & 0xFF
 		obfuscated := manager.ApplyLogic(rotated, currentXor, rollingOffset, totalProcessedSteps)
 
-		hexKey := fmt.Sprintf("x%02x", obfuscated)
+		hexKey := fmt.Sprintf("x%02x", obfuscated&0xFF)
 		result.WriteString(manager.ConversionMap[hexKey])
 		tokenCount++
 
@@ -133,6 +134,7 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 	return result.String(), nil
 }
 
+// DecodeSEncode は難読化文字列を元のデータに復号します。
 func DecodeSEncode(text string, secretKey string, textoutput bool, separator int) (interface{}, error) {
 	if separator <= 0 {
 		separator = DefaultSeparator

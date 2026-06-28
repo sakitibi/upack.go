@@ -63,6 +63,7 @@ func (m *SEncodeManager) executeShuffle(words []string, rng func() float64) {
 			offset := m.LogicSequence[i%len(m.LogicSequence)]
 			j := int(rng() * float64(i+1))
 
+			// ★ JSの優先順位: % は ^ より高いため `i ^ (offset % 2) == 0` が正しい挙動です
 			if (i ^ (offset % 2)) == 0 {
 				j = (j + offset) % (i + 1)
 			}
@@ -96,7 +97,7 @@ func (m *SEncodeManager) buildMapping(words []string) {
 		}
 
 		targetPos := currentIdx % 256
-		hexKey := fmt.Sprintf("x%02x", targetPos)
+		hexKey := fmt.Sprintf("x%02x", targetPos&0xFF)
 
 		m.ConversionMap[hexKey] = words[i]
 		m.ReverseMap[words[i]] = targetPos
@@ -126,24 +127,26 @@ func (m *SEncodeManager) deriveSecureSeed(key string, iv []byte) uint32 {
 	combined := append(keyBytes, iv...)
 
 	hash := sha256.Sum256(combined)
-	return binary.BigEndian.Uint32(hash[0:4])
+	// TS側の `new Uint32Array(hashBuffer)[0]` は、実行環境依存（ほぼ100%リトルエンディアン）となるためLittleEndianで解釈
+	return binary.LittleEndian.Uint32(hash[0:4])
 }
 
+// ★ JSのビット演算(int32としてシフト処理された後に >>> 0 される挙動)を完全に再現
 func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
-	x := seed
+	x := int32(seed)
 	if x == 0 {
 		x = 88675123
 	}
 	return func() float64 {
 		x ^= x << 13
-		x ^= x >> 17
+		x ^= int32(uint32(x) >> 17) // JSの >>> 17 (論理右シフト) の再現
 		x ^= x << 5
-		return float64(x) / 4294967296.0
+		return float64(uint32(x)) / 4294967296.0
 	}
 }
 
 func (m *SEncodeManager) GenerateSignature(data []byte) []byte {
-	var h1 int32 = -2128831035 // 0x811c9dc5
+	var h1 int32 = -2128831035 // 0x811c9dc5 の符号付き整数表現
 	var h2 int32 = 0x12345678
 
 	for i := 0; i < len(data); i++ {
@@ -155,6 +158,7 @@ func (m *SEncodeManager) GenerateSignature(data []byte) []byte {
 	}
 
 	sig := make([]byte, 16)
+	// JS側の DataView は明示的に BigEndian (false) 指定されているため、ここをBigEndianに統一
 	binary.BigEndian.PutUint32(sig[0:4], uint32(h1))
 	binary.BigEndian.PutUint32(sig[4:8], uint32(h2))
 	binary.BigEndian.PutUint32(sig[8:12], uint32(h1^h2))
@@ -176,6 +180,7 @@ func (m *SEncodeManager) ApplyLogic(val, xor, salt, step int) byte {
 	case 4:
 		return byte((val ^ (xor + salt)) & 0xFF)
 	case 5:
+		// ★ JSの優先順位: ^ は & より高いため `((val ^ salt) ^ step) & 0xFF` が正しい挙動です
 		return byte(((val ^ salt) ^ step) & 0xFF)
 	default:
 		return byte((val ^ xor) & 0xFF)
