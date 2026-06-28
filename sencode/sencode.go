@@ -12,7 +12,6 @@ import (
 
 const DefaultSeparator = math.MaxInt32
 
-// EncodeSEncode はバイト列または文字列を暗号化難読化文字列に変換します。
 func EncodeSEncode(input interface{}, secretKey string, separator int) (string, error) {
 	if separator <= 0 {
 		separator = DefaultSeparator
@@ -32,16 +31,13 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 		return "", nil
 	}
 
-	// 8バイトのセキュアなIV生成
 	iv := make([]byte, 8)
 	if _, err := rand.Read(iv); err != nil {
-		// フォールバック
 		for i := 0; i < 8; i++ {
 			iv[i] = byte(mathrand.Intn(256))
 		}
 	}
 
-	// ダミーIVで初期化
 	dummyIv := make([]byte, 8)
 	manager := NewSEncodeManager(secretKey, dummyIv)
 	if err := manager.Initialize(); err != nil {
@@ -121,8 +117,10 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 
 		b := dataWithPayload[i]
 		rot := (manager.PoisonKey + totalProcessedSteps) % 8
-		rotated := ((b << rot) | (b >> (8 - rot))) & 0xFF
-		obfuscated := manager.ApplyLogic(int(rotated), currentXor, rollingOffset, totalProcessedSteps)
+
+		b32 := int32(b)
+		rotated32 := ((b32 << rot) | int32(uint32(b32)>>(8-rot))) & 0xFF
+		obfuscated := manager.ApplyLogic(int(rotated32), currentXor, rollingOffset, totalProcessedSteps)
 
 		hexKey := fmt.Sprintf("x%02x", obfuscated)
 		result.WriteString(manager.ConversionMap[hexKey])
@@ -136,14 +134,11 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 	return result.String(), nil
 }
 
-// DecodeSEncode は難読化文字列を元のデータに復号します。
-// textoutputがtrueの場合は string、falseの場合は []byte を返します。
 func DecodeSEncode(text string, secretKey string, textoutput bool, separator int) (interface{}, error) {
 	if separator <= 0 {
 		separator = DefaultSeparator
 	}
 
-	// 長い単語から降順ソートして正規表現を構築
 	sortedWords := make([]string, len(BaseWords))
 	copy(sortedWords, BaseWords)
 	sort.Slice(sortedWords, func(i, j int) bool {
@@ -241,8 +236,8 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 			hasMorphed = true
 		}
 
+		// JS側の乱数消費回数と厳密に同期
 		if phantomRng() < 0.25 {
-			phantomRng()
 			if mIdx < len(matches) && junkSet[matches[mIdx]] {
 				tokenCount++
 				mIdx++
@@ -291,8 +286,8 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 				rotated := int(manager.ReverseLogic(obfuscated, currentXor, rollingOffset, totalProcessedSteps))
 				rot := (manager.PoisonKey + totalProcessedSteps) % 8
 
-				rotated32 := uint32(rotated)
-				originalByte := byte(((rotated32 >> rot) | (rotated32 << (8 - rot))) & 0xFF)
+				rotated32 := int32(rotated)
+				originalByte := byte((uint32(rotated32)>>rot | uint32(rotated32<<(8-rot))) & 0xFF)
 
 				resultBytes = append(resultBytes, originalByte)
 				decodedBytesCount++
@@ -325,6 +320,7 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 	}
 
 	if !isMatch {
+		// 署名が一致しない場合は、偽物の[]byteバッファを返す
 		return generateFakeBuffer(len(dataOnly)), nil
 	}
 
@@ -334,7 +330,6 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 	return dataOnly, nil
 }
 
-// RandomGenerate はランダムな結合文字列を生成します。
 func RandomGenerate(length int, prefix, prefix2 string) string {
 	if prefix == "" {
 		prefix = "_"

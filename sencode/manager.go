@@ -63,7 +63,7 @@ func (m *SEncodeManager) executeShuffle(words []string, rng func() float64) {
 			offset := m.LogicSequence[i%len(m.LogicSequence)]
 			j := int(rng() * float64(i+1))
 
-			if ((i ^ offset) % 2) == 0 {
+			if (i ^ (offset % 2)) == 0 {
 				j = (j + offset) % (i + 1)
 			}
 
@@ -72,7 +72,7 @@ func (m *SEncodeManager) executeShuffle(words []string, rng func() float64) {
 			if i%32 == 0 {
 				charSum := 0
 				for _, r := range words[i] {
-					charSum += int(r) // JSの charCodeAt(0) の再現
+					charSum += int(r)
 				}
 				if (charSum & 0xFF) > 128 {
 					rng()
@@ -125,8 +125,6 @@ func (m *SEncodeManager) deriveSecureSeed(key string, iv []byte) uint32 {
 	keyBytes := []byte(key)
 	combined := append(keyBytes, iv...)
 
-	// Web Crypto API (SHA-256) と互換
-	// Goの crypto/sha256 は標準環境で常に利用可能です
 	hash := sha256.Sum256(combined)
 	return binary.BigEndian.Uint32(hash[0:4])
 }
@@ -137,24 +135,22 @@ func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
 		x = 88675123
 	}
 	return func() float64 {
-		x ^= (x << 13) & 0xFFFFFFFF
-		x ^= (x >> 17) & 0xFFFFFFFF
-		x ^= (x << 5) & 0xFFFFFFFF
-		return float64(x&0xFFFFFFFF) / 4294967296.0
+		x ^= x << 13
+		x ^= x >> 17
+		x ^= x << 5
+		return float64(x) / 4294967296.0
 	}
 }
 
 func (m *SEncodeManager) GenerateSignature(data []byte) []byte {
-	var h1 int32 = -2128831035 // 0x811c9dc5 の符号付き32bit表現
-	var h2 int32 = 0x12345678
+	var h1 int64 = -2128831035
+	var h2 int64 = 0x12345678
 
 	for i := 0; i < len(data); i++ {
-		h1 ^= int32(data[i])
-		// Math.imul(h1, 0x01000193) の再現
-		h1 = h1 * 0x01000193
-		h2 ^= h1 ^ int32(data[i])
-		// Math.imul(h2, 0x0dcd1943) の再現
-		h2 = h2 * 0x0dcd1943
+		h1 ^= int64(data[i])
+		h1 = int64(int32(h1 * 0x01000193))
+		h2 ^= h1 ^ int64(data[i])
+		h2 = int64(int32(h2 * 0x0dcd1943))
 	}
 
 	sig := make([]byte, 16)
