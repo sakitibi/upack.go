@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math"
 )
 
 type SEncodeManager struct {
@@ -39,13 +40,13 @@ func (m *SEncodeManager) Initialize() error {
 	seed := m.deriveSecureSeed(m.SecretKey, m.IV)
 	rng := m.CreateRng(seed)
 
-	m.InitialXor = int(uint32(rng()*256) & 0xFF)
-	m.MagicSalt = int(uint32(rng()*256) & 0xFF)
-	m.PoisonKey = int((uint32(rng()*7) & 0xFF) + 1)
+	m.InitialXor = int(uint32(math.Floor(rng()*256)) & 0xFF)
+	m.MagicSalt = int(uint32(math.Floor(rng()*256)) & 0xFF)
+	m.PoisonKey = int((uint32(math.Floor(rng()*7)) & 0xFF) + 1)
 
 	m.LogicSequence = make([]int, 16)
 	for i := 0; i < 16; i++ {
-		m.LogicSequence[i] = int(uint32(rng()*8) & 0xFF)
+		m.LogicSequence[i] = int(uint32(math.Floor(rng()*8)) & 0xFF)
 	}
 
 	words := make([]string, len(BaseWords))
@@ -61,10 +62,12 @@ func (m *SEncodeManager) executeShuffle(words []string, rng func() float64) {
 	for pass := 0; pass < 2; pass++ {
 		for i := length - 1; i > 0; i-- {
 			offset := m.LogicSequence[i%len(m.LogicSequence)]
-			j := int(rng() * float64(i+1))
 
-			// JSの優先順位: % は ^ より高いため `i ^ (offset % 2) == 0` が正しい挙動です
-			if (i ^ (offset % 2)) == 0 {
+			// ★JSの Math.floor(rng() * (i + 1)) を正確に再現（丸め誤差対策）
+			j := int(math.Floor(rng() * float64(i+1)))
+
+			// ★JSの (i ^ offset) % 2 === 0  (実質 i ^ (offset % 2) === 0) を確実に同期
+			if ((i ^ (offset % 2)) & 1) == 0 {
 				j = (j + offset) % (i + 1)
 			}
 
@@ -127,11 +130,9 @@ func (m *SEncodeManager) deriveSecureSeed(key string, iv []byte) uint32 {
 	combined := append(keyBytes, iv...)
 
 	hash := sha256.Sum256(combined)
-	// TS側の `new Uint32Array(hashBuffer)[0]` はリトルエンディアン（x86/ARM環境）になるためLittleEndianで解釈
 	return binary.LittleEndian.Uint32(hash[0:4])
 }
 
-// ★ JSのビット演算(>>> 17 の完全論理シフト再現)を修正
 func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
 	x := int32(seed)
 	if x == 0 {
@@ -139,14 +140,14 @@ func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
 	}
 	return func() float64 {
 		x ^= x << 13
-		x ^= int32(uint32(x) >> 17) // ★ここを int32(uint32(x) >> 17) にすることで JSの >>> 17 と完全同期
+		x ^= int32(uint32(x) >> 17)
 		x ^= x << 5
 		return float64(uint32(x)) / 4294967296.0
 	}
 }
 
 func (m *SEncodeManager) GenerateSignature(data []byte) []byte {
-	var h1 int32 = -2128831035 // 0x811c9dc5 の符号付き整数表現
+	var h1 int32 = -2128831035 // 0x811c9dc5
 	var h2 int32 = 0x12345678
 
 	for i := 0; i < len(data); i++ {
@@ -158,7 +159,6 @@ func (m *SEncodeManager) GenerateSignature(data []byte) []byte {
 	}
 
 	sig := make([]byte, 16)
-	// JS側の DataView は明示的に BigEndian (false) 指定されているため、ここをBigEndianに統一
 	binary.BigEndian.PutUint32(sig[0:4], uint32(h1))
 	binary.BigEndian.PutUint32(sig[4:8], uint32(h2))
 	binary.BigEndian.PutUint32(sig[8:12], uint32(h1^h2))
@@ -180,7 +180,6 @@ func (m *SEncodeManager) ApplyLogic(val, xor, salt, step int) byte {
 	case 4:
 		return byte((val ^ (xor + salt)) & 0xFF)
 	case 5:
-		// JSの優先順位: ^ は & より高いため `((val ^ salt) ^ step) & 0xFF` が正しい挙動
 		return byte(((val ^ salt) ^ step) & 0xFF)
 	default:
 		return byte((val ^ xor) & 0xFF)
