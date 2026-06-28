@@ -1,222 +1,58 @@
 package sencode
 
 import (
-	"errors"
+	"crypto/rand"
+	"fmt"
 	"math"
-	"math/rand"
+	mathrand "math/rand"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 )
 
-type SEncodeMapProps map[string]string
-type SDecodeMapProps map[string]int
+const DefaultSeparator = math.MaxInt32
 
-type SEncodeManager struct {
-	ConversionMap SEncodeMapProps
-	ReverseMap    SDecodeMapProps
-	JunkWords     []string
-	InitialXor    int
-	MagicSalt     int
-	PoisonKey     int
-	LogicSequence []int
-	secretKey     string
-}
-
-func NewSEncodeManager(secretKey string) (*SEncodeManager, error) {
-	if secretKey == "" {
-		secretKey = "default"
-	}
-	manager := &SEncodeManager{
-		secretKey: secretKey,
-	}
-	err := manager.initializeMaps(secretKey)
-	if err != nil {
-		return nil, err
-	}
-	return manager, nil
-}
-
-func (m *SEncodeManager) initializeMaps(secretKey string) error {
-	if len(BaseWords) < 256 {
-		return errors.New("BASE_WORDS不足")
+// EncodeSEncode はバイト列または文字列を暗号化難読化文字列に変換します。
+func EncodeSEncode(input interface{}, secretKey string, separator int) (string, error) {
+	if separator <= 0 {
+		separator = DefaultSeparator
 	}
 
-	seed := m.GetSeed(secretKey)
-	rng := m.CreateRng(seed)
-
-	m.InitialXor = int(math.Floor(rng() * 256))
-	m.MagicSalt = int(math.Floor(rng() * 256))
-	m.PoisonKey = int(math.Floor(rng()*7) + 1)
-
-	m.LogicSequence = make([]int, 16)
-	for i := 0; i < 16; i++ {
-		m.LogicSequence[i] = int(math.Floor(rng() * 8))
-	}
-
-	words := make([]string, len(BaseWords))
-	copy(words, BaseWords)
-
-	m.executeShuffle(words, rng)
-	m.buildMapping(words)
-	return nil
-}
-
-func (m *SEncodeManager) executeShuffle(words []string, rng func() float64) {
-	length := len(words)
-	for pass := 0; pass < 2; pass++ {
-		for i := length - 1; i > 0; i-- {
-			offset := m.LogicSequence[i%len(m.LogicSequence)]
-			j := int(math.Floor(rng() * float64(i+1)))
-
-			if (i^offset)%2 == 0 {
-				j = (j + offset) % (i + 1)
-			}
-
-			words[i], words[j] = words[j], words[i]
-
-			if i%32 == 0 {
-				charSum := 0
-				for _, c := range words[i] {
-					charSum += int(c)
-				}
-				if (charSum & 0xFF) > 128 {
-					rng()
-				}
-			}
-		}
-	}
-}
-
-func (m *SEncodeManager) buildMapping(words []string) {
-	m.ConversionMap = make(SEncodeMapProps)
-	m.ReverseMap = make(SDecodeMapProps)
-	assignedIndices := make(map[int]bool)
-	currentIdx := m.LogicSequence[0]
-
-	for i := 0; i < 256; i++ {
-		step := m.LogicSequence[i%16] + 1
-
-		for assignedIndices[currentIdx%256] {
-			currentIdx++
-		}
-
-		targetPos := currentIdx % 256
-		hexKey := "x" + strconv.FormatInt(int64(targetPos), 16)
-		if len(hexKey) == 2 { // "x" + 1文字の場合、"x0"の形にするためパディング
-			hexKey = "x0" + hexKey[1:]
-		}
-
-		m.ConversionMap[hexKey] = words[i]
-		m.ReverseMap[words[i]] = targetPos
-		assignedIndices[targetPos] = true
-
-		currentIdx += step
-	}
-
-	m.JunkWords = words[256:]
-}
-
-func (m *SEncodeManager) DynamicMorphTable(separatorCount int) {
-	morphSeed := m.GetSeed(m.secretKey + "_morph_token_" + strconv.Itoa(separatorCount))
-	morphRng := m.CreateRng(morphSeed)
-
-	freshWords := make([]string, len(BaseWords))
-	copy(freshWords, BaseWords)
-
-	m.executeShuffle(freshWords, morphRng)
-	m.buildMapping(freshWords)
-}
-
-func (m *SEncodeManager) GetSeed(key string) uint32 {
-	var h uint32 = 0x811c9dc5
-	for i := 0; i < len(key); i++ {
-		h ^= uint32(key[i])
-		// Math.imul のシミュレーション（32ビットオーバーフローを許容）
-		h = h * 0x01000193
-	}
-	return h // >>> 0 はGoの uint32 で表現されます
-}
-
-func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
-	s := seed
-	return func() float64 {
-		// | 0 のシミュレーション（int32へのキャストと等価ですが、シード管理はuint32で行います）
-		s = (s*1664525 + 1013904223)
-		return float64(s) / 4294967296.0
-	}
-}
-
-func (m *SEncodeManager) GenerateSignature(data []byte) int {
-	sig := m.MagicSalt
-	for i := 0; i < len(data); i++ {
-		// Math.imul(sig ^ data[i], 0x01000193) の再現
-		imul := uint32(sig^int(data[i])) * 0x01000193
-		sig = int(imul) & 0xFF
-	}
-	return sig
-}
-
-func (m *SEncodeManager) ApplyLogic(val, xor, salt, step int) int {
-	mode := m.LogicSequence[step%len(m.LogicSequence)]
-	switch mode {
-	case 0:
-		return (val ^ xor ^ salt) & 0xFF
-	case 1:
-		return (val + xor + salt) & 0xFF
-	case 2:
-		return ((val ^ salt) - xor) & 0xFF
-	case 3:
-		return ((val - salt) ^ xor) & 0xFF
-	case 4:
-		return (val ^ (xor + salt)) & 0xFF
-	case 5:
-		return (val ^ salt ^ step) & 0xFF
+	var rawData []byte
+	switch v := input.(type) {
+	case string:
+		rawData = []byte(v)
+	case []byte:
+		rawData = v
 	default:
-		return (val ^ xor) & 0xFF
-	}
-}
-
-func (m *SEncodeManager) ReverseLogic(val, xor, salt, step int) int {
-	mode := m.LogicSequence[step%len(m.LogicSequence)]
-	switch mode {
-	case 0:
-		return (val ^ xor ^ salt) & 0xFF
-	case 1:
-		return (val - xor - salt) & 0xFF
-	case 2:
-		return ((val + xor) ^ salt) & 0xFF
-	case 3:
-		return ((val ^ xor) + salt) & 0xFF
-	case 4:
-		return (val ^ (xor + salt)) & 0xFF
-	case 5:
-		return (val ^ step ^ salt) & 0xFF
-	default:
-		return (val ^ xor) & 0xFF
-	}
-}
-
-func EncodeSEncode(buffer []byte, secretKey string, separator ...int) (string, error) {
-	sep := math.MaxInt32
-	if len(separator) > 0 && separator[0] > 0 {
-		sep = separator[0]
+		return "", fmt.Errorf("invalid input type")
 	}
 
-	manager, err := NewSEncodeManager(secretKey)
-	if err != nil {
-		return "", err
-	}
-
-	if len(buffer) == 0 {
+	if len(rawData) == 0 {
 		return "", nil
 	}
 
-	sig := manager.GenerateSignature(buffer)
-	dataWithSig := make([]byte, len(buffer)+1)
-	copy(dataWithSig, buffer)
-	dataWithSig[len(buffer)] = byte(sig)
+	// 8バイトのセキュアなIV生成
+	iv := make([]byte, 8)
+	if _, err := rand.Read(iv); err != nil {
+		// フォールバック
+		for i := 0; i < 8; i++ {
+			iv[i] = byte(mathrand.Intn(256))
+		}
+	}
+
+	// ダミーIVで初期化
+	dummyIv := make([]byte, 8)
+	manager := NewSEncodeManager(secretKey, dummyIv)
+	if err := manager.Initialize(); err != nil {
+		return "", err
+	}
+
+	sig := manager.GenerateSignature(rawData)
+	dataWithPayload := make([]byte, len(iv)+len(rawData)+len(sig))
+	copy(dataWithPayload[0:8], iv)
+	copy(dataWithPayload[8:8+len(rawData)], rawData)
+	copy(dataWithPayload[8+len(rawData):], sig)
 
 	phantomRng := manager.CreateRng(uint32(manager.InitialXor ^ manager.MagicSalt))
 	currentXor := manager.InitialXor
@@ -225,123 +61,182 @@ func EncodeSEncode(buffer []byte, secretKey string, separator ...int) (string, e
 
 	tokenCount := 0
 	hasMorphed := false
-
-	nextPhantomStep := int(math.Floor(phantomRng()*16)) + 5
+	nextPhantomStep := int(phantomRng()*16) + 5
 	totalProcessedSteps := 0
+	ivSwapped := false
 
-	for i := 0; i < len(dataWithSig); i++ {
-		if !hasMorphed && tokenCount >= sep {
-			manager.DynamicMorphTable(sep)
+	for i := 0; i < len(dataWithPayload); i++ {
+		if !ivSwapped && i == 8 {
+			manager = NewSEncodeManager(secretKey, iv)
+			if err := manager.Initialize(); err != nil {
+				return "", err
+			}
+
+			phantomRng = manager.CreateRng(uint32(manager.InitialXor ^ manager.MagicSalt))
+			currentXor = manager.InitialXor
+			rollingOffset = manager.MagicSalt
+			nextPhantomStep = int(phantomRng()*16) + 5
+
+			totalProcessedSteps = 0
+			if tokenCount >= separator {
+				if err := manager.DynamicMorphTable(separator); err != nil {
+					return "", err
+				}
+				hasMorphed = true
+			} else {
+				hasMorphed = false
+			}
+			ivSwapped = true
+		}
+
+		if !hasMorphed && tokenCount >= separator {
+			if err := manager.DynamicMorphTable(separator); err != nil {
+				return "", err
+			}
 			hasMorphed = true
 		}
 
 		if phantomRng() < 0.25 {
-			junkIdx := int(math.Floor(phantomRng() * float64(len(manager.JunkWords))))
+			junkIdx := int(phantomRng() * float64(len(manager.JunkWords)))
 			result.WriteString(manager.JunkWords[junkIdx])
 			tokenCount++
 		}
 
 		for totalProcessedSteps >= nextPhantomStep {
-			if !hasMorphed && tokenCount >= sep {
-				manager.DynamicMorphTable(sep)
+			if !hasMorphed && tokenCount >= separator {
+				if err := manager.DynamicMorphTable(separator); err != nil {
+					return "", err
+				}
 				hasMorphed = true
 			}
 			phantomVal := (currentXor ^ rollingOffset ^ totalProcessedSteps) & 0xFF
-			hexKey := "x" + strconv.FormatInt(int64(phantomVal), 16)
-			if len(hexKey) == 2 {
-				hexKey = "x0" + hexKey[1:]
-			}
+			hexKey := fmt.Sprintf("x%02x", phantomVal)
 			result.WriteString(manager.ConversionMap[hexKey])
 			tokenCount++
 
 			currentXor = (currentXor + phantomVal) & 0xFF
-			nextPhantomStep += int(math.Floor(phantomRng()*16)) + 5
+			nextPhantomStep += int(phantomRng()*16) + 5
 			totalProcessedSteps++
 		}
 
-		b := int(dataWithSig[i])
-		rot := uint((manager.PoisonKey + totalProcessedSteps) % 8)
-		// JavaScriptのビット演算シフトの再現
+		b := dataWithPayload[i]
+		rot := (manager.PoisonKey + totalProcessedSteps) % 8
 		rotated := ((b << rot) | (b >> (8 - rot))) & 0xFF
-		obfuscated := manager.ApplyLogic(rotated, currentXor, rollingOffset, totalProcessedSteps)
+		obfuscated := manager.ApplyLogic(int(rotated), currentXor, rollingOffset, totalProcessedSteps)
 
-		hexKey := "x" + strconv.FormatInt(int64(obfuscated), 16)
-		if len(hexKey) == 2 {
-			hexKey = "x0" + hexKey[1:]
-		}
+		hexKey := fmt.Sprintf("x%02x", obfuscated)
 		result.WriteString(manager.ConversionMap[hexKey])
 		tokenCount++
 
-		currentXor = (currentXor + obfuscated + totalProcessedSteps) & 0xFF
-		rollingOffset = (rollingOffset ^ b) & 0xFF
+		currentXor = (currentXor + int(obfuscated) + totalProcessedSteps) & 0xFF
+		rollingOffset = (rollingOffset ^ int(b)) & 0xFF
 		totalProcessedSteps++
 	}
 
 	return result.String(), nil
 }
 
-func DecodeSEncode(text string, secretKey string, separator ...int) ([]byte, error) {
-	sep := math.MaxInt32
-	if len(separator) > 0 && separator[0] > 0 {
-		sep = separator[0]
+// DecodeSEncode は難読化文字列を元のデータに復号します。
+// textoutputがtrueの場合は string、falseの場合は []byte を返します。
+func DecodeSEncode(text string, secretKey string, textoutput bool, separator int) (interface{}, error) {
+	if separator <= 0 {
+		separator = DefaultSeparator
 	}
 
-	manager, err := NewSEncodeManager(secretKey)
-	if err != nil {
-		return nil, err
-	}
-
-	junkSet := make(map[string]bool)
-	for _, w := range manager.JunkWords {
-		junkSet[w] = true
-	}
-
-	failRng := manager.CreateRng(manager.GetSeed(secretKey + "_fail"))
-	generateFakeBuffer := func(length int) []byte {
-		if length <= 0 {
-			length = 32
-		}
-		fake := make([]byte, length)
-		for i := 0; i < length; i++ {
-			fake[i] = byte(math.Floor(failRng() * 256))
-		}
-		return fake
-	}
-
+	// 長い単語から降順ソートして正規表現を構築
 	sortedWords := make([]string, len(BaseWords))
 	copy(sortedWords, BaseWords)
 	sort.Slice(sortedWords, func(i, j int) bool {
 		return len(sortedWords[i]) > len(sortedWords[j])
 	})
 
-	// 正規表現エスケープと結合
-	var escapedKeys []string
-	for _, v := range sortedWords {
-		escapedKeys = append(escapedKeys, regexp.QuoteMeta(v))
+	escapedKeys := make([]string, len(sortedWords))
+	for i, w := range sortedWords {
+		escapedKeys[i] = regexp.QuoteMeta(w)
 	}
 	re := regexp.MustCompile(strings.Join(escapedKeys, "|"))
 	matches := re.FindAllString(text, -1)
+	if matches == nil {
+		matches = []string{}
+	}
 
-	estimatedLen := int(math.Floor(float64(len(matches)) * 0.7))
+	estimatedLen := int(float64(len(matches)) * 0.7)
 
-	var resultBytes []int
+	generateFakeBuffer := func(length int) []byte {
+		if length <= 0 {
+			length = 32
+		}
+		fake := make([]byte, length)
+		_, _ = rand.Read(fake)
+		return fake
+	}
+
+	dummyIv := make([]byte, 8)
+	manager := NewSEncodeManager(secretKey, dummyIv)
+	if err := manager.Initialize(); err != nil {
+		return nil, err
+	}
+
+	junkSet := make(map[string]bool)
+	for _, jw := range manager.JunkWords {
+		junkSet[jw] = true
+	}
+
 	phantomRng := manager.CreateRng(uint32(manager.InitialXor ^ manager.MagicSalt))
 	currentXor := manager.InitialXor
 	rollingOffset := manager.MagicSalt
 
-	nextPhantomStep := int(math.Floor(phantomRng()*16)) + 5
+	nextPhantomStep := int(phantomRng()*16) + 5
 	totalProcessedSteps := 0
-	mIdx := 0
-
 	tokenCount := 0
 	hasMorphed := false
 
+	var resultBytes []byte
+	mIdx := 0
+	decodedBytesCount := 0
+	ivSwapped := false
+
 	for mIdx < len(matches) {
-		if !hasMorphed && tokenCount >= sep {
-			manager.DynamicMorphTable(sep)
+		if !ivSwapped && decodedBytesCount == 8 {
+			realIv := resultBytes[0:8]
+			manager = NewSEncodeManager(secretKey, realIv)
+			if err := manager.Initialize(); err != nil {
+				return nil, err
+			}
+
 			junkSet = make(map[string]bool)
-			for _, w := range manager.JunkWords {
-				junkSet[w] = true
+			for _, jw := range manager.JunkWords {
+				junkSet[jw] = true
+			}
+
+			phantomRng = manager.CreateRng(uint32(manager.InitialXor ^ manager.MagicSalt))
+			currentXor = manager.InitialXor
+			rollingOffset = manager.MagicSalt
+			nextPhantomStep = int(phantomRng()*16) + 5
+
+			totalProcessedSteps = 0
+			if tokenCount >= separator {
+				if err := manager.DynamicMorphTable(separator); err != nil {
+					return nil, err
+				}
+				junkSet = make(map[string]bool)
+				for _, jw := range manager.JunkWords {
+					junkSet[jw] = true
+				}
+				hasMorphed = true
+			} else {
+				hasMorphed = false
+			}
+			ivSwapped = true
+		}
+
+		if !hasMorphed && tokenCount >= separator {
+			if err := manager.DynamicMorphTable(separator); err != nil {
+				return nil, err
+			}
+			junkSet = make(map[string]bool)
+			for _, jw := range manager.JunkWords {
+				junkSet[jw] = true
 			}
 			hasMorphed = true
 		}
@@ -355,11 +250,13 @@ func DecodeSEncode(text string, secretKey string, separator ...int) ([]byte, err
 		}
 
 		for totalProcessedSteps >= nextPhantomStep && mIdx < len(matches) {
-			if !hasMorphed && tokenCount >= sep {
-				manager.DynamicMorphTable(sep)
+			if !hasMorphed && tokenCount >= separator {
+				if err := manager.DynamicMorphTable(separator); err != nil {
+					return nil, err
+				}
 				junkSet = make(map[string]bool)
-				for _, w := range manager.JunkWords {
-					junkSet[w] = true
+				for _, jw := range manager.JunkWords {
+					junkSet[jw] = true
 				}
 				hasMorphed = true
 			}
@@ -371,10 +268,9 @@ func DecodeSEncode(text string, secretKey string, separator ...int) ([]byte, err
 				continue
 			}
 
-			obfuscated, exists := manager.ReverseMap[token]
-			if exists {
+			if obfuscated, ok := manager.ReverseMap[token]; ok {
 				currentXor = (currentXor + obfuscated) & 0xFF
-				nextPhantomStep += int(math.Floor(phantomRng()*16)) + 5
+				nextPhantomStep += int(phantomRng()*16) + 5
 				totalProcessedSteps++
 				tokenCount++
 				mIdx++
@@ -391,17 +287,18 @@ func DecodeSEncode(text string, secretKey string, separator ...int) ([]byte, err
 				continue
 			}
 
-			obfuscated, exists := manager.ReverseMap[token]
-			if exists {
-				rotated := manager.ReverseLogic(obfuscated, currentXor, rollingOffset, totalProcessedSteps)
-				rot := uint((manager.PoisonKey + totalProcessedSteps) % 8)
-				// JavaScriptの無符号右シフト・左シフトの再現
-				originalByte := ((rotated >> rot) | (rotated << (8 - rot))) & 0xFF
+			if obfuscated, ok := manager.ReverseMap[token]; ok {
+				rotated := int(manager.ReverseLogic(obfuscated, currentXor, rollingOffset, totalProcessedSteps))
+				rot := (manager.PoisonKey + totalProcessedSteps) % 8
+
+				rotated32 := uint32(rotated)
+				originalByte := byte(((rotated32 >> rot) | (rotated32 << (8 - rot))) & 0xFF)
 
 				resultBytes = append(resultBytes, originalByte)
+				decodedBytesCount++
 
 				currentXor = (currentXor + obfuscated + totalProcessedSteps) & 0xFF
-				rollingOffset = (rollingOffset ^ originalByte) & 0xFF
+				rollingOffset = (rollingOffset ^ int(originalByte)) & 0xFF
 				totalProcessedSteps++
 				tokenCount++
 				mIdx++
@@ -411,49 +308,49 @@ func DecodeSEncode(text string, secretKey string, separator ...int) ([]byte, err
 		}
 	}
 
-	if len(resultBytes) < 1 {
+	if len(resultBytes) < 25 {
 		return generateFakeBuffer(16), nil
 	}
 
-	receivedSig := resultBytes[len(resultBytes)-1]
-	resultBytes = resultBytes[:len(resultBytes)-1]
-
-	dataOnly := make([]byte, len(resultBytes))
-	for i, v := range resultBytes {
-		dataOnly[i] = byte(v)
-	}
-
+	totalLen := len(resultBytes)
+	dataOnly := resultBytes[8 : totalLen-16]
+	receivedSig := resultBytes[totalLen-16:]
 	calculatedSig := manager.GenerateSignature(dataOnly)
 
-	if calculatedSig != receivedSig {
+	isMatch := true
+	for i := 0; i < 16; i++ {
+		if calculatedSig[i] != receivedSig[i] {
+			isMatch = false
+		}
+	}
+
+	if !isMatch {
 		return generateFakeBuffer(len(dataOnly)), nil
 	}
 
+	if textoutput {
+		return string(dataOnly), nil
+	}
 	return dataOnly, nil
 }
 
-func RandomGenerate(length int, prefix ...string) string {
-	p1 := "_"
-	p2 := ""
-	if len(prefix) > 0 {
-		p1 = prefix[0]
+// RandomGenerate はランダムな結合文字列を生成します。
+func RandomGenerate(length int, prefix, prefix2 string) string {
+	if prefix == "" {
+		prefix = "_"
 	}
-	if len(prefix) > 1 {
-		p2 = prefix[1]
-	}
-
 	if len(BaseWords) == 0 {
 		return ""
 	}
 
 	arr := make([]string, length)
 	for i := 0; i < length; i++ {
-		arr[i] = BaseWords[rand.Intn(len(BaseWords))]
+		arr[i] = BaseWords[mathrand.Intn(len(BaseWords))]
 	}
 
 	specialIndex := -1
-	if p2 != "" && length > 1 {
-		specialIndex = rand.Intn(length - 1)
+	if prefix2 != "" && length > 1 {
+		specialIndex = mathrand.Intn(length - 1)
 	}
 
 	var result strings.Builder
@@ -462,9 +359,9 @@ func RandomGenerate(length int, prefix ...string) string {
 			result.WriteString(word)
 			continue
 		}
-		currentPrefix := p1
+		currentPrefix := prefix
 		if i-1 == specialIndex {
-			currentPrefix = p2
+			currentPrefix = prefix2
 		}
 		result.WriteString(currentPrefix)
 		result.WriteString(word)

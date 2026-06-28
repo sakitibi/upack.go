@@ -286,6 +286,11 @@ var baseWords1 = []string{
 	"岩本拓賢",
 	"上田優葵",
 	"原田凜",
+	"稲葉千佳",
+	"松浦仁太郎",
+	"西塔三奈",
+	"藤万咲",
+	"中山和香奈",
 	"魔法",
 	"魔&法使い",
 	"魔&法少女",
@@ -300,14 +305,14 @@ var baseWords1 = []string{
 	"深夜",
 	"暗黒",
 	"闇夜",
+}
+
+var baseWords2 = []string{
 	"火炎",
 	"凍結",
 	"雷",
 	"催眠",
 	"杖",
-}
-
-var baseWords2 = []string{
 	"ステッキ",
 	"魔&女の帽子",
 	"黒い洋服",
@@ -405,7 +410,7 @@ var baseWords2 = []string{
 	"KoukiTakagishi",
 	"RyunosukeTakada",
 	"AkariTakahashi",
-	"AoiTuji",
+	"AoiTsuji",
 	"ShinichiHashimoto",
 	"MinoruHashimoto",
 	"YuukiHujimura",
@@ -603,19 +608,24 @@ var baseWords2 = []string{
 	"EmiriAsada",
 	"KatsuhitoIsobe",
 	"NanakoDoi",
+}
+
+var baseWords3 = []string{
 	"IoriKotera",
 	"RyuutaHujii",
 	"TaichiMinai",
 	"MiyuFujioka",
 	"MitsuhoNishida",
-}
-
-var baseWords3 = []string{
 	"KantaSuzuki",
 	"SatokiNoo",
 	"HirotakaIwamoto",
 	"YukiUeda",
 	"RinHarada",
+	"ChikaInaba",
+	"JintarouMatsuura",
+	"MinaSaitou",
+	"MasakiHuji",
+	"WakanaNakayama",
 }
 
 // パッケージロード時に自動実行される初期化関数
