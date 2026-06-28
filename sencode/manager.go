@@ -63,7 +63,7 @@ func (m *SEncodeManager) executeShuffle(words []string, rng func() float64) {
 			offset := m.LogicSequence[i%len(m.LogicSequence)]
 			j := int(rng() * float64(i+1))
 
-			// ★ JSの優先順位: % は ^ より高いため `i ^ (offset % 2) == 0` が正しい挙動です
+			// JSの優先順位: % は ^ より高いため `i ^ (offset % 2) == 0` が正しい挙動です
 			if (i ^ (offset % 2)) == 0 {
 				j = (j + offset) % (i + 1)
 			}
@@ -127,11 +127,11 @@ func (m *SEncodeManager) deriveSecureSeed(key string, iv []byte) uint32 {
 	combined := append(keyBytes, iv...)
 
 	hash := sha256.Sum256(combined)
-	// TS側の `new Uint32Array(hashBuffer)[0]` は、実行環境依存（ほぼ100%リトルエンディアン）となるためLittleEndianで解釈
+	// TS側の `new Uint32Array(hashBuffer)[0]` はリトルエンディアン（x86/ARM環境）になるためLittleEndianで解釈
 	return binary.LittleEndian.Uint32(hash[0:4])
 }
 
-// ★ JSのビット演算(int32としてシフト処理された後に >>> 0 される挙動)を完全に再現
+// ★ JSのビット演算(>>> 17 の完全論理シフト再現)を修正
 func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
 	x := int32(seed)
 	if x == 0 {
@@ -139,7 +139,7 @@ func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
 	}
 	return func() float64 {
 		x ^= x << 13
-		x ^= int32(uint32(x) >> 17) // JSの >>> 17 (論理右シフト) の再現
+		x ^= int32(uint32(x) >> 17) // ★ここを int32(uint32(x) >> 17) にすることで JSの >>> 17 と完全同期
 		x ^= x << 5
 		return float64(uint32(x)) / 4294967296.0
 	}
@@ -180,7 +180,7 @@ func (m *SEncodeManager) ApplyLogic(val, xor, salt, step int) byte {
 	case 4:
 		return byte((val ^ (xor + salt)) & 0xFF)
 	case 5:
-		// ★ JSの優先順位: ^ は & より高いため `((val ^ salt) ^ step) & 0xFF` が正しい挙動です
+		// JSの優先順位: ^ は & より高いため `((val ^ salt) ^ step) & 0xFF` が正しい挙動
 		return byte(((val ^ salt) ^ step) & 0xFF)
 	default:
 		return byte((val ^ xor) & 0xFF)

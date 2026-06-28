@@ -328,38 +328,3 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 	}
 	return dataOnly, nil
 }
-
-func RandomGenerate(length int, prefix, prefix2 string) string {
-	if prefix == "" {
-		prefix = "_"
-	}
-	if len(BaseWords) == 0 {
-		return ""
-	}
-
-	arr := make([]string, length)
-	for i := 0; i < length; i++ {
-		arr[i] = BaseWords[mathrand.Intn(len(BaseWords))]
-	}
-
-	specialIndex := -1
-	if prefix2 != "" && length > 1 {
-		specialIndex = mathrand.Intn(length - 1)
-	}
-
-	var result strings.Builder
-	for i, word := range arr {
-		if i == 0 {
-			result.WriteString(word)
-			continue
-		}
-		currentPrefix := prefix
-		if i-1 == specialIndex {
-			currentPrefix = prefix2
-		}
-		result.WriteString(currentPrefix)
-		result.WriteString(word)
-	}
-
-	return result.String()
-}
