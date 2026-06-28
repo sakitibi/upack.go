@@ -118,9 +118,8 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 		b := dataWithPayload[i]
 		rot := (manager.PoisonKey + totalProcessedSteps) % 8
 
-		b32 := int32(b)
-		rotated32 := ((b32 << rot) | int32(uint32(b32)>>(8-rot))) & 0xFF
-		obfuscated := manager.ApplyLogic(int(rotated32), currentXor, rollingOffset, totalProcessedSteps)
+		rotated := ((int(b) << rot) | (int(b) >> (8 - rot))) & 0xFF
+		obfuscated := manager.ApplyLogic(rotated, currentXor, rollingOffset, totalProcessedSteps)
 
 		hexKey := fmt.Sprintf("x%02x", obfuscated)
 		result.WriteString(manager.ConversionMap[hexKey])
@@ -236,7 +235,6 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 			hasMorphed = true
 		}
 
-		// JS側の乱数消費回数と厳密に同期
 		if phantomRng() < 0.25 {
 			if mIdx < len(matches) && junkSet[matches[mIdx]] {
 				tokenCount++
@@ -286,8 +284,7 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 				rotated := int(manager.ReverseLogic(obfuscated, currentXor, rollingOffset, totalProcessedSteps))
 				rot := (manager.PoisonKey + totalProcessedSteps) % 8
 
-				rotated32 := int32(rotated)
-				originalByte := byte((uint32(rotated32)>>rot | uint32(rotated32<<(8-rot))) & 0xFF)
+				originalByte := byte(((rotated >> rot) | (rotated << (8 - rot))) & 0xFF)
 
 				resultBytes = append(resultBytes, originalByte)
 				decodedBytesCount++
@@ -320,7 +317,6 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 	}
 
 	if !isMatch {
-		// 署名が一致しない場合は、偽物の[]byteバッファを返す
 		return generateFakeBuffer(len(dataOnly)), nil
 	}
 

@@ -147,17 +147,24 @@ func (m *SEncodeManager) GenerateSignature(data []byte) []byte {
 	var h2 int64 = 0x12345678
 
 	for i := 0; i < len(data); i++ {
-		h1 ^= int64(data[i])
-		h1 = int64(int32(h1 * 0x01000193))
-		h2 ^= h1 ^ int64(data[i])
-		h2 = int64(int32(h2 * 0x0dcd1943))
+		h1_32 := int64(int32(h1))
+		h1_32 ^= int64(data[i])
+		h1 = h1_32 * 0x01000193
+
+		h2_32 := int64(int32(h2))
+		h2_32 ^= int64(int32(h1)) ^ int64(data[i])
+		h2 = h2_32 * 0x0dcd1943
 	}
 
+	// 最終出力用に 32bit に固定
+	finalH1 := uint32(int32(h1))
+	finalH2 := uint32(int32(h2))
+
 	sig := make([]byte, 16)
-	binary.BigEndian.PutUint32(sig[0:4], uint32(h1))
-	binary.BigEndian.PutUint32(sig[4:8], uint32(h2))
-	binary.BigEndian.PutUint32(sig[8:12], uint32(h1^h2))
-	binary.BigEndian.PutUint32(sig[12:16], uint32(h1+h2))
+	binary.BigEndian.PutUint32(sig[0:4], finalH1)
+	binary.BigEndian.PutUint32(sig[4:8], finalH2)
+	binary.BigEndian.PutUint32(sig[8:12], finalH1^finalH2)
+	binary.BigEndian.PutUint32(sig[12:16], finalH1+finalH2)
 	return sig
 }
 
@@ -175,7 +182,7 @@ func (m *SEncodeManager) ApplyLogic(val, xor, salt, step int) byte {
 	case 4:
 		return byte((val ^ (xor + salt)) & 0xFF)
 	case 5:
-		return byte(((val ^ salt) ^ (step & 0xFF)) & 0xFF)
+		return byte((((val ^ salt) ^ step) & 0xFF) & 0xFF)
 	default:
 		return byte((val ^ xor) & 0xFF)
 	}
