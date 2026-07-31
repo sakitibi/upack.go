@@ -443,7 +443,7 @@ var baseWords2 = []string{
 	"RyoutaImadani",
 	"YuuwaUenoyama",
 	"GinjiUmemura",
-	"SuugaOota",
+	"SyuugaOota",
 	"MeiKawamoto",
 	"MakitoKuno",
 	"AoiSano",
