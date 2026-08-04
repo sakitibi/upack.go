@@ -309,6 +309,26 @@ var baseWords1 = []string{
 
 var baseWords2 = []string{
 	"町塚紗希",
+	"三津川喜生",
+	"稲尾紗也",
+	"首藤樹江",
+	"眞里谷絃",
+	"中川慶治",
+	"髙瀬美咲",
+	"中川莉央",
+	"小泉彩乃",
+	"藤原結衣",
+	"橘里奈",
+	"斎藤結衣",
+	"藤原乃愛",
+	"森下彩音",
+	"石田美咲",
+	"佐倉葵",
+	"相原莉子",
+	"岡本梨沙",
+	"井上華奈",
+	"宇野真由",
+	"大谷綾乃",
 	"魔法",
 	"魔&法使い",
 	"魔&法少女",
@@ -588,6 +608,9 @@ var baseWords2 = []string{
 	"MomoNukui",
 	"ShinkuKanamori",
 	"MiyuOka",
+}
+
+var baseWords3 = []string{
 	"KaeNakayama",
 	"YudukiNakajima",
 	"IchikaArisue",
@@ -608,9 +631,6 @@ var baseWords2 = []string{
 	"RokkoYabumoto",
 	"YudukiKobayashi",
 	"KanadeUsui",
-}
-
-var baseWords3 = []string{
 	"RentarouKimoto",
 	"TowaHiramatsu",
 	"KyougoKamimori",
@@ -656,11 +676,31 @@ var baseWords3 = []string{
 	"NatsukiWada",
 	"SoraOokawa",
 	"SakiMachiduka",
+	"KiiMitsukawa",
+	"SayaInao",
+	"SaeSyudou",
+	"ItoMaritani",
+	"KeijiNakagawa",
+	"MisakiTakase",
+	"RioNakagawa",
+	"AyanoKoizumi",
+	"YuiHujiwara",
+	"RinaTachibana",
+	"YuiSaitou",
+	"NoaHujiwara",
+	"AyaneMorishita",
+	"MisakiIshida",
+	"AoiSakura",
+	"RikoAihara",
+	"RisaOkamoto",
+	"KanaInoue",
+	"MayuUno",
+	"AyanoOotani",
 }
 
 // パッケージロード時に自動実行される初期化関数
 func init() {
-	// 2つの初期データを結合して BaseWords を完成させる
+	// 3つの初期データを結合して BaseWords を完成させる
 	baseWords_tmp1 = append(baseWords1, baseWords2...)
 	BaseWords = append(baseWords_tmp1, baseWords3...)
 }
