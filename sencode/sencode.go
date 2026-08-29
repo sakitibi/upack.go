@@ -1,10 +1,12 @@
 package sencode
 
 import (
+	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
 	"math"
-	mathrand "math/rand"
 	"regexp"
 	"sort"
 	"strings"
@@ -12,7 +14,18 @@ import (
 
 const DefaultSeparator = math.MaxInt32
 
-func EncodeSEncode(input interface{}, secretKey string, separator int) (string, error) {
+// 鍵ペア生成ヘルパー（ECDH P-256）
+func GenerateKeyPair() (*ecdsa.PrivateKey, error) {
+	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+}
+
+// ECDH 共有鍵の導出
+func deriveSharedSecret(priv *ecdsa.PrivateKey, pub *ecdsa.PublicKey) string {
+	x, _ := priv.Curve.ScalarMult(pub.X, pub.Y, priv.D.Bytes())
+	return fmt.Sprintf("%064x", x)
+}
+
+func EncodeSEncode(input interface{}, recipientPubKey *ecdsa.PublicKey, separator int) (string, error) {
 	if separator <= 0 {
 		separator = DefaultSeparator
 	}
@@ -31,83 +44,77 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 		return "", nil
 	}
 
-	iv := make([]byte, 8)
-	if _, err := rand.Read(iv); err != nil {
-		for i := 0; i < 8; i++ {
-			iv[i] = byte(mathrand.Intn(256))
-		}
+	ephemeralPriv, err := GenerateKeyPair()
+	if err != nil {
+		return "", err
 	}
+	sharedKeyHex := deriveSharedSecret(ephemeralPriv, recipientPubKey)
 
-	dummyIv := make([]byte, 8)
-	manager := NewSEncodeManager(secretKey, dummyIv)
-	if err := manager.Initialize(); err != nil {
+	// 非圧縮形式の公開鍵 (65 bytes)
+	exportedPubKey := elliptic.Marshal(elliptic.P256(), ephemeralPriv.PublicKey.X, ephemeralPriv.PublicKey.Y)
+
+	// ヘッダー構造: [1byte: 公開鍵長(65)][65bytes: 非圧縮公開鍵]
+	headerPayload := make([]byte, 1+len(exportedPubKey))
+	headerPayload[0] = byte(len(exportedPubKey))
+	copy(headerPayload[1:], exportedPubKey)
+
+	headerManager := NewSEncodeManager("ephemeral_header_key", nil)
+	if err := headerManager.Initialize(); err != nil {
 		return "", err
 	}
 
-	sig := manager.GenerateSignature(rawData)
-	dataWithPayload := make([]byte, len(iv)+len(rawData)+len(sig))
-	copy(dataWithPayload[0:8], iv)
-	copy(dataWithPayload[8:8+len(rawData)], rawData)
-	copy(dataWithPayload[8+len(rawData):], sig)
-
-	phantomRng := manager.CreateRng(uint32(manager.InitialXor ^ manager.MagicSalt))
-	currentXor := manager.InitialXor
-	rollingOffset := manager.MagicSalt
 	var result strings.Builder
-
 	tokenCount := 0
-	hasMorphed := false
+
+	for _, b := range headerPayload {
+		hexKey := fmt.Sprintf("x%02x", b)
+		result.WriteString(headerManager.ConversionMap[hexKey])
+		tokenCount++
+	}
+
+	bodyManager := NewSEncodeManager(sharedKeyHex, nil)
+	if err := bodyManager.Initialize(); err != nil {
+		return "", err
+	}
+
+	// 署名 (16 bytes) を計算してデータの末尾に追加
+	sig := bodyManager.GenerateSignature(rawData)
+	dataWithSig := make([]byte, len(rawData)+len(sig))
+	copy(dataWithSig, rawData)
+	copy(dataWithSig[len(rawData):], sig)
+
+	phantomRng := bodyManager.CreateRng(uint32(bodyManager.InitialXor ^ bodyManager.MagicSalt))
+	currentXor := bodyManager.InitialXor
+	rollingOffset := bodyManager.MagicSalt
+
 	nextPhantomStep := int(phantomRng()*16) + 5
 	totalProcessedSteps := 0
-	ivSwapped := false
+	hasMorphed := false
 
-	for i := 0; i < len(dataWithPayload); i++ {
-		if !ivSwapped && i == 8 {
-			manager = NewSEncodeManager(secretKey, iv)
-			if err := manager.Initialize(); err != nil {
-				return "", err
-			}
-
-			phantomRng = manager.CreateRng(uint32(manager.InitialXor ^ manager.MagicSalt))
-			currentXor = manager.InitialXor
-			rollingOffset = manager.MagicSalt
-			nextPhantomStep = int(phantomRng()*16) + 5
-
-			totalProcessedSteps = 0
-			if tokenCount >= separator {
-				if err := manager.DynamicMorphTable(separator); err != nil {
-					return "", err
-				}
-				hasMorphed = true
-			} else {
-				hasMorphed = false
-			}
-			ivSwapped = true
-		}
-
+	for i := 0; i < len(dataWithSig); i++ {
 		if !hasMorphed && tokenCount >= separator {
-			if err := manager.DynamicMorphTable(separator); err != nil {
+			if err := bodyManager.DynamicMorphTable(separator); err != nil {
 				return "", err
 			}
 			hasMorphed = true
 		}
 
 		if phantomRng() < 0.25 {
-			junkIdx := int(phantomRng() * float64(len(manager.JunkWords)))
-			result.WriteString(manager.JunkWords[junkIdx])
+			junkIdx := int(phantomRng() * float64(len(bodyManager.JunkWords)))
+			result.WriteString(bodyManager.JunkWords[junkIdx])
 			tokenCount++
 		}
 
 		for totalProcessedSteps >= nextPhantomStep {
 			if !hasMorphed && tokenCount >= separator {
-				if err := manager.DynamicMorphTable(separator); err != nil {
+				if err := bodyManager.DynamicMorphTable(separator); err != nil {
 					return "", err
 				}
 				hasMorphed = true
 			}
 			phantomVal := (currentXor ^ rollingOffset ^ totalProcessedSteps) & 0xFF
 			hexKey := fmt.Sprintf("x%02x", phantomVal&0xFF)
-			result.WriteString(manager.ConversionMap[hexKey])
+			result.WriteString(bodyManager.ConversionMap[hexKey])
 			tokenCount++
 
 			currentXor = (currentXor + phantomVal) & 0xFF
@@ -115,14 +122,13 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 			totalProcessedSteps++
 		}
 
-		b := dataWithPayload[i]
-		rot := (manager.PoisonKey + totalProcessedSteps) % 8
-
+		b := dataWithSig[i]
+		rot := (bodyManager.PoisonKey + totalProcessedSteps) % 8
 		rotated := ((int(b) << rot) | (int(b) >> (8 - rot))) & 0xFF
-		obfuscated := manager.ApplyLogic(rotated, currentXor, rollingOffset, totalProcessedSteps)
+		obfuscated := bodyManager.ApplyLogic(rotated, currentXor, rollingOffset, totalProcessedSteps)
 
 		hexKey := fmt.Sprintf("x%02x", obfuscated&0xFF)
-		result.WriteString(manager.ConversionMap[hexKey])
+		result.WriteString(bodyManager.ConversionMap[hexKey])
 		tokenCount++
 
 		currentXor = (currentXor + int(obfuscated) + totalProcessedSteps) & 0xFF
@@ -133,7 +139,7 @@ func EncodeSEncode(input interface{}, secretKey string, separator int) (string, 
 	return result.String(), nil
 }
 
-func DecodeSEncode(text string, secretKey string, textoutput bool, separator int) (interface{}, error) {
+func DecodeSEncode(text string, recipientPrivKey *ecdsa.PrivateKey, textoutput bool, separator int) (interface{}, error) {
 	if separator <= 0 {
 		separator = DefaultSeparator
 	}
@@ -150,12 +156,8 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 	}
 	re := regexp.MustCompile(strings.Join(escapedKeys, "|"))
 	matches := re.FindAllString(text, -1)
-	if matches == nil {
-		matches = []string{}
-	}
 
 	estimatedLen := int(float64(len(matches)) * 0.7)
-
 	generateFakeBuffer := func(length int) []byte {
 		if length <= 0 {
 			length = 32
@@ -165,71 +167,81 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 		return fake
 	}
 
-	dummyIv := make([]byte, 8)
-	manager := NewSEncodeManager(secretKey, dummyIv)
-	if err := manager.Initialize(); err != nil {
+	if len(matches) < 66 {
+		return generateFakeBuffer(estimatedLen), nil
+	}
+
+	headerManager := NewSEncodeManager("ephemeral_header_key", nil)
+	if err := headerManager.Initialize(); err != nil {
+		return nil, err
+	}
+
+	pubKeyLenWord := matches[0]
+	pubKeyLen, ok := headerManager.ReverseMap[pubKeyLenWord]
+	if !ok || pubKeyLen != 65 {
+		return generateFakeBuffer(estimatedLen), nil
+	}
+
+	pubKeyBytes := make([]byte, pubKeyLen)
+	for i := 0; i < pubKeyLen; i++ {
+		val, ok := headerManager.ReverseMap[matches[1+i]]
+		if !ok {
+			return generateFakeBuffer(estimatedLen), nil
+		}
+		pubKeyBytes[i] = byte(val)
+	}
+
+	// P-256 公開鍵を復元
+	x, y := elliptic.Unmarshal(elliptic.P256(), pubKeyBytes)
+	if x == nil || y == nil {
+		return generateFakeBuffer(estimatedLen), nil
+	}
+	ephemeralPubKey := &ecdsa.PublicKey{Curve: elliptic.P256(), X: x, Y: y}
+
+	// 共通鍵の導出
+	sharedKeyHex := deriveSharedSecret(recipientPrivKey, ephemeralPubKey)
+
+	bodyManager := NewSEncodeManager(sharedKeyHex, nil)
+	if err := bodyManager.Initialize(); err != nil {
 		return nil, err
 	}
 
 	junkSet := make(map[string]bool)
-	for _, jw := range manager.JunkWords {
+	for _, jw := range bodyManager.JunkWords {
 		junkSet[jw] = true
 	}
 
-	phantomRng := manager.CreateRng(uint32(manager.InitialXor ^ manager.MagicSalt))
-	currentXor := manager.InitialXor
-	rollingOffset := manager.MagicSalt
+	phantomRng := bodyManager.CreateRng(uint32(bodyManager.InitialXor ^ bodyManager.MagicSalt))
+	currentXor := bodyManager.InitialXor
+	rollingOffset := bodyManager.MagicSalt
 
 	nextPhantomStep := int(phantomRng()*16) + 5
 	totalProcessedSteps := 0
-	tokenCount := 0
+
+	mIdx := 1 + pubKeyLen
+	tokenCount := 1 + pubKeyLen
 	hasMorphed := false
 
 	var resultBytes []byte
-	mIdx := 0
-	decodedBytesCount := 0
-	ivSwapped := false
+
+	if tokenCount >= separator {
+		if err := bodyManager.DynamicMorphTable(separator); err != nil {
+			return nil, err
+		}
+		junkSet = make(map[string]bool)
+		for _, jw := range bodyManager.JunkWords {
+			junkSet[jw] = true
+		}
+		hasMorphed = true
+	}
 
 	for mIdx < len(matches) {
-		if !ivSwapped && decodedBytesCount == 8 {
-			realIv := resultBytes[0:8]
-			manager = NewSEncodeManager(secretKey, realIv)
-			if err := manager.Initialize(); err != nil {
-				return nil, err
-			}
-
-			junkSet = make(map[string]bool)
-			for _, jw := range manager.JunkWords {
-				junkSet[jw] = true
-			}
-
-			phantomRng = manager.CreateRng(uint32(manager.InitialXor ^ manager.MagicSalt))
-			currentXor = manager.InitialXor
-			rollingOffset = manager.MagicSalt
-			nextPhantomStep = int(phantomRng()*16) + 5
-
-			totalProcessedSteps = 0
-			if tokenCount >= separator {
-				if err := manager.DynamicMorphTable(separator); err != nil {
-					return nil, err
-				}
-				junkSet = make(map[string]bool)
-				for _, jw := range manager.JunkWords {
-					junkSet[jw] = true
-				}
-				hasMorphed = true
-			} else {
-				hasMorphed = false
-			}
-			ivSwapped = true
-		}
-
 		if !hasMorphed && tokenCount >= separator {
-			if err := manager.DynamicMorphTable(separator); err != nil {
+			if err := bodyManager.DynamicMorphTable(separator); err != nil {
 				return nil, err
 			}
 			junkSet = make(map[string]bool)
-			for _, jw := range manager.JunkWords {
+			for _, jw := range bodyManager.JunkWords {
 				junkSet[jw] = true
 			}
 			hasMorphed = true
@@ -245,11 +257,11 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 
 		for totalProcessedSteps >= nextPhantomStep && mIdx < len(matches) {
 			if !hasMorphed && tokenCount >= separator {
-				if err := manager.DynamicMorphTable(separator); err != nil {
+				if err := bodyManager.DynamicMorphTable(separator); err != nil {
 					return nil, err
 				}
 				junkSet = make(map[string]bool)
-				for _, jw := range manager.JunkWords {
+				for _, jw := range bodyManager.JunkWords {
 					junkSet[jw] = true
 				}
 				hasMorphed = true
@@ -262,7 +274,7 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 				continue
 			}
 
-			if obfuscated, ok := manager.ReverseMap[token]; ok {
+			if obfuscated, ok := bodyManager.ReverseMap[token]; ok {
 				currentXor = (currentXor + obfuscated) & 0xFF
 				nextPhantomStep += int(phantomRng()*16) + 5
 				totalProcessedSteps++
@@ -281,14 +293,13 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 				continue
 			}
 
-			if obfuscated, ok := manager.ReverseMap[token]; ok {
-				rotated := int(manager.ReverseLogic(obfuscated, currentXor, rollingOffset, totalProcessedSteps))
-				rot := (manager.PoisonKey + totalProcessedSteps) % 8
+			if obfuscated, ok := bodyManager.ReverseMap[token]; ok {
+				rotated := int(bodyManager.ReverseLogic(obfuscated, currentXor, rollingOffset, totalProcessedSteps))
+				rot := (bodyManager.PoisonKey + totalProcessedSteps) % 8
 
 				originalByte := byte(((rotated >> rot) | (rotated << (8 - rot))) & 0xFF)
 
 				resultBytes = append(resultBytes, originalByte)
-				decodedBytesCount++
 
 				currentXor = (currentXor + obfuscated + totalProcessedSteps) & 0xFF
 				rollingOffset = (rollingOffset ^ int(originalByte)) & 0xFF
@@ -301,23 +312,18 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 		}
 	}
 
-	if len(resultBytes) < 25 {
+	const sigLen = 16
+	if len(resultBytes) < sigLen {
 		return generateFakeBuffer(16), nil
 	}
 
 	totalLen := len(resultBytes)
-	dataOnly := resultBytes[8 : totalLen-16]
-	receivedSig := resultBytes[totalLen-16:]
-	calculatedSig := manager.GenerateSignature(dataOnly)
+	dataOnly := resultBytes[:totalLen-sigLen]
+	receivedSig := resultBytes[totalLen-sigLen:]
+	calculatedSig := bodyManager.GenerateSignature(dataOnly)
 
-	isMatch := true
-	for i := 0; i < 16; i++ {
-		if calculatedSig[i] != receivedSig[i] {
-			isMatch = false
-		}
-	}
-
-	if !isMatch {
+	// 署名検証 (16 bytes)
+	if !bytes.Equal(calculatedSig, receivedSig) {
 		return generateFakeBuffer(len(dataOnly)), nil
 	}
 
@@ -325,39 +331,4 @@ func DecodeSEncode(text string, secretKey string, textoutput bool, separator int
 		return string(dataOnly), nil
 	}
 	return dataOnly, nil
-}
-
-func RandomGenerate(length int, prefix, prefix2 string) string {
-	if prefix == "" {
-		prefix = "_"
-	}
-	if len(BaseWords) == 0 {
-		return ""
-	}
-
-	arr := make([]string, length)
-	for i := 0; i < length; i++ {
-		arr[i] = BaseWords[mathrand.Intn(len(BaseWords))]
-	}
-
-	specialIndex := -1
-	if prefix2 != "" && length > 1 {
-		specialIndex = mathrand.Intn(length - 1)
-	}
-
-	var result strings.Builder
-	for i, word := range arr {
-		if i == 0 {
-			result.WriteString(word)
-			continue
-		}
-		currentPrefix := prefix
-		if i-1 == specialIndex {
-			currentPrefix = prefix2
-		}
-		result.WriteString(currentPrefix)
-		result.WriteString(word)
-	}
-
-	return result.String()
 }

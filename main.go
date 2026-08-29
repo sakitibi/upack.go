@@ -8,14 +8,21 @@ import (
 )
 
 func main() {
-	secretKey := "my-super-secret-key"
+	// 1. 受信者側の鍵ペアを生成
+	recipientKeyPair, err := sencode.GenerateKeyPair()
+	if err != nil {
+		log.Fatalf("鍵ペアの生成に失敗しました: %v", err)
+	}
+
 	originalText := "Hello, Go World! 12345"
 
 	fmt.Printf("元の文字列: %s\n", originalText)
 	fmt.Println("--------------------------------------------------")
 
 	inputBytes := []byte(originalText)
-	encodedString, err := sencode.EncodeSEncode(inputBytes, secretKey, 0)
+	separator := 50
+
+	encodedString, err := sencode.EncodeSEncode(inputBytes, &recipientKeyPair.PublicKey, separator)
 	if err != nil {
 		log.Fatalf("エンコードに失敗しました: %v", err)
 	}
@@ -23,33 +30,38 @@ func main() {
 	fmt.Printf("エンコード結果（単語の羅列）:\n%s\n", encodedString)
 	fmt.Println("--------------------------------------------------")
 
-	decodedInterface, err := sencode.DecodeSEncode(encodedString, secretKey, true, 0)
+	decodedInterface, err := sencode.DecodeSEncode(encodedString, recipientKeyPair, true, separator)
 	if err != nil {
 		log.Fatalf("デコードに失敗しました: %v", err)
 	}
 
-	// 型アサーションで string を取り出す
-	decodedText, ok := decodedInterface.(string)
-	if !ok {
-		log.Fatalf("デコード結果の型アサーション(string)に失敗しました")
+	// 型アサーションで結果を確認
+	switch v := decodedInterface.(type) {
+	case string:
+		fmt.Printf("デコード結果: %s\n", v)
+	case []byte:
+		// 署名検証失敗時などは []byte のダミーバッファが返る
+		log.Fatalf("復号または署名検証に失敗しました（ダミーデータが返されました）: %x", v)
+	default:
+		log.Fatalf("想定外の型が返されました")
 	}
 
-	fmt.Printf("デコード結果: %s\n", decodedText)
 	fmt.Println("--------------------------------------------------")
 
-	wrongKey := "wrong-key"
-	fakeInterface, err := sencode.DecodeSEncode(encodedString, wrongKey, false, 0)
+	wrongKeyPair, err := sencode.GenerateKeyPair()
 	if err != nil {
-		// エラーが出た場合は安全に処理を逃がす
-		fmt.Printf("間違った鍵でのデコードに失敗しました（期待通りの挙動）: %v\n", err)
+		log.Fatalf("偽の鍵ペア生成に失敗しました: %v", err)
+	}
+
+	fakeInterface, err := sencode.DecodeSEncode(encodedString, wrongKeyPair, false, separator)
+	if err != nil {
+		fmt.Printf("間違った鍵でのデコード処理エラー: %v\n", err)
 	} else {
-		// 型アサーションで []byte を取り出す
 		fakeBytes, ok := fakeInterface.([]byte)
 		if !ok {
 			log.Fatalf("偽データの型アサーション([]byte)に失敗しました")
 		}
 
-		// エラーがなかった場合のみ、長さを考慮して出力
 		end := 10
 		if len(fakeBytes) < end {
 			end = len(fakeBytes)
