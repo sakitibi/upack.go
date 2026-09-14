@@ -1,8 +1,6 @@
 package sencode
 
 import (
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -37,16 +35,16 @@ func (m *SEncodeManager) Initialize() error {
 		return errors.New("BASE_WORDS不足")
 	}
 
-	seed := m.deriveSecureSeed(m.SecretKey, m.IV)
+	seed := m.GetSeed(m.SecretKey)
 	rng := m.CreateRng(seed)
 
-	m.InitialXor = int(uint32(math.Floor(rng()*256)) & 0xFF)
-	m.MagicSalt = int(uint32(math.Floor(rng()*256)) & 0xFF)
-	m.PoisonKey = int((uint32(math.Floor(rng()*7)) & 0xFF) + 1)
+	m.InitialXor = int(math.Floor(rng() * 256))
+	m.MagicSalt = int(math.Floor(rng() * 256))
+	m.PoisonKey = int(math.Floor(rng()*7) + 1)
 
 	m.LogicSequence = make([]int, 16)
 	for i := 0; i < 16; i++ {
-		m.LogicSequence[i] = int(uint32(math.Floor(rng()*8)) & 0xFF)
+		m.LogicSequence[i] = int(math.Floor(rng() * 8))
 	}
 
 	words := make([]string, len(BaseWords))
@@ -62,12 +60,9 @@ func (m *SEncodeManager) executeShuffle(words []string, rng func() float64) {
 	for pass := 0; pass < 2; pass++ {
 		for i := length - 1; i > 0; i-- {
 			offset := m.LogicSequence[i%len(m.LogicSequence)]
-
-			// ★JSの Math.floor(rng() * (i + 1)) を正確に再現（丸め誤差対策）
 			j := int(math.Floor(rng() * float64(i+1)))
 
-			// ★JSの (i ^ offset) % 2 === 0  (実質 i ^ (offset % 2) === 0) を確実に同期
-			if ((i ^ (offset % 2)) & 1) == 0 {
+			if ((i ^ offset) % 2) == 0 {
 				j = (j + offset) % (i + 1)
 			}
 
@@ -114,7 +109,7 @@ func (m *SEncodeManager) buildMapping(words []string) {
 
 func (m *SEncodeManager) DynamicMorphTable(separatorCount int) error {
 	morphKey := fmt.Sprintf("%s_morph_token_%d", m.SecretKey, separatorCount)
-	morphSeed := m.deriveSecureSeed(morphKey, m.IV)
+	morphSeed := m.GetSeed(morphKey)
 	morphRng := m.CreateRng(morphSeed)
 
 	freshWords := make([]string, len(BaseWords))
@@ -125,45 +120,35 @@ func (m *SEncodeManager) DynamicMorphTable(separatorCount int) error {
 	return nil
 }
 
-func (m *SEncodeManager) deriveSecureSeed(key string, iv []byte) uint32 {
+func (m *SEncodeManager) GetSeed(key string) uint32 {
 	keyBytes := []byte(key)
-	combined := append(keyBytes, iv...)
+	combined := append(keyBytes, m.IV...)
 
-	hash := sha256.Sum256(combined)
-	return binary.LittleEndian.Uint32(hash[0:4])
+	var h uint32 = 0x811c9dc5
+	for _, b := range combined {
+		h ^= uint32(b)
+		h *= 0x01000193
+	}
+	return h
 }
 
+// TS版 (sencodeManager.ts) の LCG RNG と完全に一致させる
 func (m *SEncodeManager) CreateRng(seed uint32) func() float64 {
-	x := int32(seed)
-	if x == 0 {
-		x = 88675123
-	}
+	s := int32(seed)
 	return func() float64 {
-		x ^= x << 13
-		x ^= int32(uint32(x) >> 17)
-		x ^= x << 5
-		return float64(uint32(x)) / 4294967296.0
+		s = s*1664525 + 1013904223
+		unsigned := uint32(s)
+		return float64(unsigned) / 4294967296.0
 	}
 }
 
-func (m *SEncodeManager) GenerateSignature(data []byte) []byte {
-	var h1 int32 = -2128831035 // 0x811c9dc5
-	var h2 int32 = 0x12345678
-
+// TS版と完全に一致する1バイト署名生成
+func (m *SEncodeManager) GenerateSignature(data []byte) byte {
+	sig := m.MagicSalt
 	for i := 0; i < len(data); i++ {
-		d := int32(data[i])
-		h1 ^= d
-		h1 = h1 * 0x01000193
-		h2 ^= h1 ^ d
-		h2 = h2 * 0x0dcd1943
+		sig = ((sig ^ int(data[i])) * 0x01000193) & 0xFF
 	}
-
-	sig := make([]byte, 16)
-	binary.BigEndian.PutUint32(sig[0:4], uint32(h1))
-	binary.BigEndian.PutUint32(sig[4:8], uint32(h2))
-	binary.BigEndian.PutUint32(sig[8:12], uint32(h1^h2))
-	binary.BigEndian.PutUint32(sig[12:16], uint32(h1+h2))
-	return sig
+	return byte(sig)
 }
 
 func (m *SEncodeManager) ApplyLogic(val, xor, salt, step int) byte {

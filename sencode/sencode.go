@@ -2,12 +2,9 @@ package sencode
 
 import (
 	"crypto/ecdh"
-	"crypto/ecdsa"
-	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
 	"math"
-	"math/big"
 	"regexp"
 	"sort"
 	"strings"
@@ -32,33 +29,23 @@ func rotateRight8(b byte, rot int) byte {
 }
 
 // 鍵ペア生成ヘルパー（ECDH P-256）
-func GenerateKeyPair() (*ecdsa.PrivateKey, error) {
-	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+func GenerateKeyPair() (*ecdh.PrivateKey, error) {
+	return ecdh.P256().GenerateKey(rand.Reader)
 }
 
 // ==========================================
 // エンコード / デコード処理
 // ==========================================
 
-// ECDH 共有鍵の導出
-func deriveSharedSecret(priv *ecdsa.PrivateKey, pub *ecdsa.PublicKey) (string, error) {
-	ecdhPriv, err := priv.ECDH()
-	if err != nil {
-		return "", err
-	}
-	ecdhPub, err := pub.ECDH()
-	if err != nil {
-		return "", err
-	}
-
-	secret, err := ecdhPriv.ECDH(ecdhPub)
+func deriveSharedSecret(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) (string, error) {
+	secret, err := priv.ECDH(pub)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("%064x", secret), nil
 }
 
-func EncodeSEncode(input any, recipientPubKey *ecdsa.PublicKey, separator int) (string, error) {
+func EncodeSEncode(input interface{}, recipientPubKey *ecdh.PublicKey, separator int) (string, error) {
 	if separator <= 0 {
 		separator = DefaultSeparator
 	}
@@ -86,12 +73,7 @@ func EncodeSEncode(input any, recipientPubKey *ecdsa.PublicKey, separator int) (
 		return "", err
 	}
 
-	// 非圧縮形式の公開鍵 (65 bytes)
-	ephemeralECDHPub, err := ephemeralPriv.PublicKey.ECDH()
-	if err != nil {
-		return "", err
-	}
-	exportedPubKey := ephemeralECDHPub.Bytes()
+	exportedPubKey := ephemeralPriv.PublicKey().Bytes()
 
 	// ヘッダー構造: [1byte: 公開鍵長(65)][65bytes: 非圧縮公開鍵]
 	headerPayload := make([]byte, 1+len(exportedPubKey))
@@ -117,8 +99,7 @@ func EncodeSEncode(input any, recipientPubKey *ecdsa.PublicKey, separator int) (
 		return "", err
 	}
 
-	sig := bodyManager.GenerateSignature(rawData)
-	sigByte := sig[0] // 最初の1バイトを採用
+	sigByte := bodyManager.GenerateSignature(rawData)
 
 	dataWithSig := make([]byte, len(rawData)+1)
 	copy(dataWithSig, rawData)
@@ -132,7 +113,7 @@ func EncodeSEncode(input any, recipientPubKey *ecdsa.PublicKey, separator int) (
 	totalProcessedSteps := 0
 	hasMorphed := false
 
-	for i := range len(dataWithSig) {
+	for i := 0; i < len(dataWithSig); i++ {
 		if !hasMorphed && tokenCount >= separator {
 			if err := bodyManager.DynamicMorphTable(separator); err != nil {
 				return "", err
@@ -166,7 +147,6 @@ func EncodeSEncode(input any, recipientPubKey *ecdsa.PublicKey, separator int) (
 		b := dataWithSig[i]
 		rot := (bodyManager.PoisonKey + totalProcessedSteps) % 8
 
-		// 左回転処理を修正
 		rotated := rotateLeft8(b, rot)
 		obfuscated := bodyManager.ApplyLogic(int(rotated), currentXor, rollingOffset, totalProcessedSteps)
 
@@ -182,7 +162,7 @@ func EncodeSEncode(input any, recipientPubKey *ecdsa.PublicKey, separator int) (
 	return result.String(), nil
 }
 
-func DecodeSEncode(text string, recipientPrivKey *ecdsa.PrivateKey, textoutput bool, separator int) (interface{}, error) {
+func DecodeSEncode(text string, recipientPrivKey *ecdh.PrivateKey, textoutput bool, separator int) (interface{}, error) {
 	if separator <= 0 {
 		separator = DefaultSeparator
 	}
@@ -234,22 +214,12 @@ func DecodeSEncode(text string, recipientPrivKey *ecdsa.PrivateKey, textoutput b
 		pubKeyBytes[i] = byte(val)
 	}
 
-	ecdhPub, err := ecdh.P256().NewPublicKey(pubKeyBytes)
+	// crypto/ecdh のみを使用（elliptic.Unmarshal は不使用）
+	ephemeralPubKey, err := ecdh.P256().NewPublicKey(pubKeyBytes)
 	if err != nil {
 		return generateFakeBuffer(estimatedLen), nil
 	}
 
-	// ecdh.PublicKey のバイト列から ecdsa.PublicKey を構築
-	pubBytes := ecdhPub.Bytes()
-	xBytes := pubBytes[1:33]
-	yBytes := pubBytes[33:65]
-	ephemeralPubKey := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(xBytes),
-		Y:     new(big.Int).SetBytes(yBytes),
-	}
-
-	// 共通鍵の導出
 	sharedKeyHex, err := deriveSharedSecret(recipientPrivKey, ephemeralPubKey)
 	if err != nil {
 		return generateFakeBuffer(estimatedLen), nil
@@ -351,7 +321,6 @@ func DecodeSEncode(text string, recipientPrivKey *ecdsa.PrivateKey, textoutput b
 				rotated := bodyManager.ReverseLogic(obfuscated, currentXor, rollingOffset, totalProcessedSteps)
 				rot := (bodyManager.PoisonKey + totalProcessedSteps) % 8
 
-				// 右回転処理を修正
 				originalByte := rotateRight8(byte(rotated), rot)
 
 				resultBytes = append(resultBytes, originalByte)
@@ -367,18 +336,16 @@ func DecodeSEncode(text string, recipientPrivKey *ecdsa.PrivateKey, textoutput b
 		}
 	}
 
-	const sigLen = 1
-	if len(resultBytes) < sigLen {
+	if len(resultBytes) < 1 {
 		return generateFakeBuffer(1), nil
 	}
 
 	totalLen := len(resultBytes)
-	dataOnly := resultBytes[:totalLen-sigLen]
-	receivedSigByte := resultBytes[totalLen-sigLen]
+	dataOnly := resultBytes[:totalLen-1]
+	receivedSigByte := resultBytes[totalLen-1]
 	calculatedSig := bodyManager.GenerateSignature(dataOnly)
 
-	// 1バイト署名の検証
-	if calculatedSig[0] != receivedSigByte {
+	if calculatedSig != receivedSigByte {
 		return generateFakeBuffer(len(dataOnly)), nil
 	}
 

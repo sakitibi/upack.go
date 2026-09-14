@@ -1,15 +1,13 @@
 package sencode
 
 import (
-	"crypto/ecdsa"
-	"crypto/elliptic"
+	"crypto/ecdh"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"math/big"
 )
 
 // ==========================================
@@ -25,7 +23,7 @@ type JWK struct {
 	Ext bool   `json:"ext,omitempty"`
 }
 
-func ExportPublicKey(pub *ecdsa.PublicKey) (string, error) {
+func ExportPublicKey(pub *ecdh.PublicKey) (string, error) {
 	der, err := x509.MarshalPKIXPublicKey(pub)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal public key: %w", err)
@@ -37,7 +35,7 @@ func ExportPublicKey(pub *ecdsa.PublicKey) (string, error) {
 	return string(pem.EncodeToMemory(block)), nil
 }
 
-func ImportPublicKey(pemStr string) (*ecdsa.PublicKey, error) {
+func ImportPublicKey(pemStr string) (*ecdh.PublicKey, error) {
 	block, _ := pem.Decode([]byte(pemStr))
 	if block == nil {
 		return nil, errors.New("invalid PEM data")
@@ -48,14 +46,14 @@ func ImportPublicKey(pemStr string) (*ecdsa.PublicKey, error) {
 		return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
 	}
 
-	pubKey, ok := key.(*ecdsa.PublicKey)
+	pubKey, ok := key.(*ecdh.PublicKey)
 	if !ok {
-		return nil, errors.New("not an ECDSA public key")
+		return nil, errors.New("not an ECDH public key")
 	}
 	return pubKey, nil
 }
 
-func ExportPrivateKey(priv *ecdsa.PrivateKey) (string, error) {
+func ExportPrivateKey(priv *ecdh.PrivateKey) (string, error) {
 	der, err := x509.MarshalPKCS8PrivateKey(priv)
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal private key: %w", err)
@@ -67,7 +65,7 @@ func ExportPrivateKey(priv *ecdsa.PrivateKey) (string, error) {
 	return string(pem.EncodeToMemory(block)), nil
 }
 
-func ImportPrivateKey(pemStr string) (*ecdsa.PrivateKey, error) {
+func ImportPrivateKey(pemStr string) (*ecdh.PrivateKey, error) {
 	block, _ := pem.Decode([]byte(pemStr))
 	if block == nil {
 		return nil, errors.New("invalid PEM data")
@@ -78,29 +76,29 @@ func ImportPrivateKey(pemStr string) (*ecdsa.PrivateKey, error) {
 		return nil, fmt.Errorf("failed to parse PKCS8 private key: %w", err)
 	}
 
-	privKey, ok := key.(*ecdsa.PrivateKey)
+	privKey, ok := key.(*ecdh.PrivateKey)
 	if !ok {
-		return nil, errors.New("not an ECDSA private key")
+		return nil, errors.New("not an ECDH private key")
 	}
 	return privKey, nil
 }
 
 // --- JWK (JSON Web Key) 補助用関数 ---
 
-func ExportPublicKeyJWK(pub *ecdsa.PublicKey) (string, error) {
-	xBytes := pub.X.Bytes()
-	yBytes := pub.Y.Bytes()
+func ExportPublicKeyJWK(pub *ecdh.PublicKey) (string, error) {
+	pubBytes := pub.Bytes() // 非圧縮フォーマット: 0x04 || X (32bytes) || Y (32bytes)
+	if len(pubBytes) != 65 || pubBytes[0] != 0x04 {
+		return "", errors.New("invalid uncompressed public key format")
+	}
 
-	xPad := make([]byte, 32)
-	yPad := make([]byte, 32)
-	copy(xPad[32-len(xBytes):], xBytes)
-	copy(yPad[32-len(yBytes):], yBytes)
+	xBytes := pubBytes[1:33]
+	yBytes := pubBytes[33:65]
 
 	jwk := JWK{
 		Kty: "EC",
 		Crv: "P-256",
-		X:   base64.RawURLEncoding.EncodeToString(xPad),
-		Y:   base64.RawURLEncoding.EncodeToString(yPad),
+		X:   base64.RawURLEncoding.EncodeToString(xBytes),
+		Y:   base64.RawURLEncoding.EncodeToString(yBytes),
 		Ext: true,
 	}
 
@@ -111,10 +109,14 @@ func ExportPublicKeyJWK(pub *ecdsa.PublicKey) (string, error) {
 	return string(b), nil
 }
 
-func ImportPublicKeyJWK(jwkStr string) (*ecdsa.PublicKey, error) {
+func ImportPublicKeyJWK(jwkStr string) (*ecdh.PublicKey, error) {
 	var jwk JWK
 	if err := json.Unmarshal([]byte(jwkStr), &jwk); err != nil {
 		return nil, err
+	}
+
+	if jwk.Crv != "P-256" {
+		return nil, fmt.Errorf("unsupported curve: %s", jwk.Crv)
 	}
 
 	xBytes, err := base64.RawURLEncoding.DecodeString(jwk.X)
@@ -126,27 +128,30 @@ func ImportPublicKeyJWK(jwkStr string) (*ecdsa.PublicKey, error) {
 		return nil, err
 	}
 
-	pub := &ecdsa.PublicKey{
-		Curve: elliptic.P256(),
-		X:     new(big.Int).SetBytes(xBytes),
-		Y:     new(big.Int).SetBytes(yBytes),
+	if len(xBytes) != 32 || len(yBytes) != 32 {
+		return nil, errors.New("invalid coordinate lengths for P-256")
 	}
-	return pub, nil
+
+	// 非圧縮ポイント形式を構築: 0x04 || X || Y
+	pubBytes := make([]byte, 65)
+	pubBytes[0] = 0x04
+	copy(pubBytes[1:33], xBytes)
+	copy(pubBytes[33:65], yBytes)
+
+	return ecdh.P256().NewPublicKey(pubBytes)
 }
 
-func ExportPrivateKeyJWK(priv *ecdsa.PrivateKey) (string, error) {
-	dBytes := priv.D.Bytes()
-	dPad := make([]byte, 32)
-	copy(dPad[32-len(dBytes):], dBytes)
+func ExportPrivateKeyJWK(priv *ecdh.PrivateKey) (string, error) {
+	dBytes := priv.Bytes() // 32バイトの秘密鍵スカラー
 
-	pubJWKStr, err := ExportPublicKeyJWK(&priv.PublicKey)
+	pubJWKStr, err := ExportPublicKeyJWK(priv.PublicKey())
 	if err != nil {
 		return "", err
 	}
 
 	var jwk JWK
 	_ = json.Unmarshal([]byte(pubJWKStr), &jwk)
-	jwk.D = base64.RawURLEncoding.EncodeToString(dPad)
+	jwk.D = base64.RawURLEncoding.EncodeToString(dBytes)
 
 	b, err := json.Marshal(jwk)
 	if err != nil {
@@ -155,14 +160,9 @@ func ExportPrivateKeyJWK(priv *ecdsa.PrivateKey) (string, error) {
 	return string(b), nil
 }
 
-func ImportPrivateKeyJWK(jwkStr string) (*ecdsa.PrivateKey, error) {
+func ImportPrivateKeyJWK(jwkStr string) (*ecdh.PrivateKey, error) {
 	var jwk JWK
 	if err := json.Unmarshal([]byte(jwkStr), &jwk); err != nil {
-		return nil, err
-	}
-
-	pub, err := ImportPublicKeyJWK(jwkStr)
-	if err != nil {
 		return nil, err
 	}
 
@@ -171,9 +171,5 @@ func ImportPrivateKeyJWK(jwkStr string) (*ecdsa.PrivateKey, error) {
 		return nil, err
 	}
 
-	priv := &ecdsa.PrivateKey{
-		PublicKey: *pub,
-		D:         new(big.Int).SetBytes(dBytes),
-	}
-	return priv, nil
+	return ecdh.P256().NewPrivateKey(dBytes)
 }

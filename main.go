@@ -20,7 +20,7 @@ func main() {
 	fmt.Println("=== 鍵の入出力テスト ===")
 
 	// PEM フォーマットのエクスポート
-	pubPEM, err := sencode.ExportPublicKey(&recipientKeyPair.PublicKey)
+	pubPEM, err := sencode.ExportPublicKey(recipientKeyPair.PublicKey())
 	if err != nil {
 		log.Fatalf("公開鍵(PEM)のエクスポート失敗: %v", err)
 	}
@@ -43,7 +43,7 @@ func main() {
 	}
 
 	// JWK フォーマットのテスト
-	pubJWK, err := sencode.ExportPublicKeyJWK(&recipientKeyPair.PublicKey)
+	pubJWK, err := sencode.ExportPublicKeyJWK(recipientKeyPair.PublicKey())
 	if err != nil {
 		log.Fatalf("公開鍵(JWK)のエクスポート失敗: %v", err)
 	}
