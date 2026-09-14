@@ -6,7 +6,6 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 )
@@ -29,25 +28,20 @@ func ExportPublicKey(pub *ecdh.PublicKey) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal public key: %w", err)
 	}
-	block := &pem.Block{
-		Type:  "PUBLIC KEY",
-		Bytes: der,
-	}
-	return string(pem.EncodeToMemory(block)), nil
+	return base64.StdEncoding.EncodeToString(der), nil
 }
 
-func ImportPublicKey(pemStr string) (*ecdh.PublicKey, error) {
-	block, _ := pem.Decode([]byte(pemStr))
-	if block == nil {
-		return nil, errors.New("invalid PEM data")
+func ImportPublicKey(base64Str string) (*ecdh.PublicKey, error) {
+	der, err := base64.StdEncoding.DecodeString(base64Str)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64: %w", err)
 	}
 
-	key, err := x509.ParsePKIXPublicKey(block.Bytes)
+	key, err := x509.ParsePKIXPublicKey(der)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
 	}
 
-	// 型を柔軟に判定して *ecdh.PublicKey に変換
 	switch pub := key.(type) {
 	case *ecdh.PublicKey:
 		return pub, nil
@@ -63,25 +57,20 @@ func ExportPrivateKey(priv *ecdh.PrivateKey) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal private key: %w", err)
 	}
-	block := &pem.Block{
-		Type:  "PRIVATE KEY",
-		Bytes: der,
-	}
-	return string(pem.EncodeToMemory(block)), nil
+	return base64.StdEncoding.EncodeToString(der), nil
 }
 
-func ImportPrivateKey(pemStr string) (*ecdh.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemStr))
-	if block == nil {
-		return nil, errors.New("invalid PEM data")
+func ImportPrivateKey(base64Str string) (*ecdh.PrivateKey, error) {
+	der, err := base64.StdEncoding.DecodeString(base64Str)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode base64: %w", err)
 	}
 
-	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	key, err := x509.ParsePKCS8PrivateKey(der)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse PKCS8 private key: %w", err)
 	}
 
-	// 型を柔軟に判定して *ecdh.PrivateKey に変換
 	switch p := key.(type) {
 	case *ecdh.PrivateKey:
 		return p, nil
@@ -91,8 +80,6 @@ func ImportPrivateKey(pemStr string) (*ecdh.PrivateKey, error) {
 		return nil, errors.New("not a supported private key type")
 	}
 }
-
-// --- JWK (JSON Web Key) 補助用関数 ---
 
 func ExportPublicKeyJWK(pub *ecdh.PublicKey) (string, error) {
 	pubBytes := pub.Bytes() // 非圧縮フォーマット: 0x04 || X (32bytes) || Y (32bytes)
