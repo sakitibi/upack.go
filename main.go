@@ -29,7 +29,8 @@ func main() {
 		log.Fatalf("秘密鍵(PEM)のエクスポート失敗: %v", err)
 	}
 
-	fmt.Printf("公開鍵 (PEM):\n%s", pubPEM)
+	fmt.Printf("公開鍵 (PEM):\n%s\n", pubPEM)
+	fmt.Printf("秘密鍵 (PEM):\n%s\n", privPEM)
 
 	// PEM フォーマットからのインポート
 	importedPubKey, err := sencode.ImportPublicKey(pubPEM)
@@ -42,11 +43,30 @@ func main() {
 	}
 
 	// JWK フォーマットのテスト
-	pubJWK, _ := sencode.ExportPublicKeyJWK(&recipientKeyPair.PublicKey)
+	pubJWK, err := sencode.ExportPublicKeyJWK(&recipientKeyPair.PublicKey)
+	if err != nil {
+		log.Fatalf("公開鍵(JWK)のエクスポート失敗: %v", err)
+	}
+	privJWK, err := sencode.ExportPrivateKeyJWK(recipientKeyPair)
+	if err != nil {
+		log.Fatalf("秘密鍵(JWK)のエクスポート失敗: %v", err)
+	}
+
 	fmt.Printf("公開鍵 (JWK):\n%s\n\n", pubJWK)
+	fmt.Printf("秘密鍵 (JWK):\n%s\n\n", privJWK)
+
+	// JWK フォーマットからのインポート確認
+	_, err = sencode.ImportPublicKeyJWK(pubJWK)
+	if err != nil {
+		log.Fatalf("公開鍵(JWK)のインポート失敗: %v", err)
+	}
+	_, err = sencode.ImportPrivateKeyJWK(privJWK)
+	if err != nil {
+		log.Fatalf("秘密鍵(JWK)のインポート失敗: %v", err)
+	}
 
 	// --------------------------------------------------
-	// エンコード・デコードのテスト（インポートした鍵を使用）
+	// エンコード・デコードのテスト
 	// --------------------------------------------------
 	fmt.Println("=== エンコード・デコードテスト ===")
 	originalText := "Hello, Go World! 12345"
