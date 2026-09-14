@@ -2,6 +2,7 @@ package sencode
 
 import (
 	"crypto/ecdh"
+	"crypto/ecdsa"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
@@ -46,11 +47,15 @@ func ImportPublicKey(pemStr string) (*ecdh.PublicKey, error) {
 		return nil, fmt.Errorf("failed to parse PKIX public key: %w", err)
 	}
 
-	pubKey, ok := key.(*ecdh.PublicKey)
-	if !ok {
-		return nil, errors.New("not an ECDH public key")
+	// 型を柔軟に判定して *ecdh.PublicKey に変換
+	switch pub := key.(type) {
+	case *ecdh.PublicKey:
+		return pub, nil
+	case *ecdsa.PublicKey:
+		return pub.ECDH()
+	default:
+		return nil, errors.New("not a supported public key type")
 	}
-	return pubKey, nil
 }
 
 func ExportPrivateKey(priv *ecdh.PrivateKey) (string, error) {
@@ -76,11 +81,15 @@ func ImportPrivateKey(pemStr string) (*ecdh.PrivateKey, error) {
 		return nil, fmt.Errorf("failed to parse PKCS8 private key: %w", err)
 	}
 
-	privKey, ok := key.(*ecdh.PrivateKey)
-	if !ok {
-		return nil, errors.New("not an ECDH private key")
+	// 型を柔軟に判定して *ecdh.PrivateKey に変換
+	switch p := key.(type) {
+	case *ecdh.PrivateKey:
+		return p, nil
+	case *ecdsa.PrivateKey:
+		return p.ECDH()
+	default:
+		return nil, errors.New("not a supported private key type")
 	}
-	return privKey, nil
 }
 
 // --- JWK (JSON Web Key) 補助用関数 ---
