@@ -8,21 +8,56 @@ import (
 )
 
 func main() {
-	// 1. 受信者側の鍵ペアを生成
+	// 受信者側の鍵ペアを生成
 	recipientKeyPair, err := sencode.GenerateKeyPair()
 	if err != nil {
 		log.Fatalf("鍵ペアの生成に失敗しました: %v", err)
 	}
 
-	originalText := "Hello, Go World! 12345"
+	// --------------------------------------------------
+	// 鍵のエクスポートとインポートのテスト
+	// --------------------------------------------------
+	fmt.Println("=== 鍵の入出力テスト ===")
 
+	// PEM フォーマットのエクスポート
+	pubPEM, err := sencode.ExportPublicKey(&recipientKeyPair.PublicKey)
+	if err != nil {
+		log.Fatalf("公開鍵(PEM)のエクスポート失敗: %v", err)
+	}
+	privPEM, err := sencode.ExportPrivateKey(recipientKeyPair)
+	if err != nil {
+		log.Fatalf("秘密鍵(PEM)のエクスポート失敗: %v", err)
+	}
+
+	fmt.Printf("公開鍵 (PEM):\n%s", pubPEM)
+
+	// PEM フォーマットからのインポート
+	importedPubKey, err := sencode.ImportPublicKey(pubPEM)
+	if err != nil {
+		log.Fatalf("公開鍵(PEM)のインポート失敗: %v", err)
+	}
+	importedPrivKey, err := sencode.ImportPrivateKey(privPEM)
+	if err != nil {
+		log.Fatalf("秘密鍵(PEM)のインポート失敗: %v", err)
+	}
+
+	// JWK フォーマットのテスト
+	pubJWK, _ := sencode.ExportPublicKeyJWK(&recipientKeyPair.PublicKey)
+	fmt.Printf("公開鍵 (JWK):\n%s\n\n", pubJWK)
+
+	// --------------------------------------------------
+	// エンコード・デコードのテスト（インポートした鍵を使用）
+	// --------------------------------------------------
+	fmt.Println("=== エンコード・デコードテスト ===")
+	originalText := "Hello, Go World! 12345"
 	fmt.Printf("元の文字列: %s\n", originalText)
 	fmt.Println("--------------------------------------------------")
 
 	inputBytes := []byte(originalText)
 	separator := 50
 
-	encodedString, err := sencode.EncodeSEncode(inputBytes, &recipientKeyPair.PublicKey, separator)
+	// インポートした公開鍵を使用してエンコード
+	encodedString, err := sencode.EncodeSEncode(inputBytes, importedPubKey, separator)
 	if err != nil {
 		log.Fatalf("エンコードに失敗しました: %v", err)
 	}
@@ -30,17 +65,16 @@ func main() {
 	fmt.Printf("エンコード結果（単語の羅列）:\n%s\n", encodedString)
 	fmt.Println("--------------------------------------------------")
 
-	decodedInterface, err := sencode.DecodeSEncode(encodedString, recipientKeyPair, true, separator)
+	// インポートした秘密鍵を使用してデコード
+	decodedInterface, err := sencode.DecodeSEncode(encodedString, importedPrivKey, true, separator)
 	if err != nil {
 		log.Fatalf("デコードに失敗しました: %v", err)
 	}
 
-	// 型アサーションで結果を確認
 	switch v := decodedInterface.(type) {
 	case string:
 		fmt.Printf("デコード結果: %s\n", v)
 	case []byte:
-		// 署名検証失敗時などは []byte のダミーバッファが返る
 		log.Fatalf("復号または署名検証に失敗しました（ダミーデータが返されました）: %x", v)
 	default:
 		log.Fatalf("想定外の型が返されました")
@@ -48,6 +82,9 @@ func main() {
 
 	fmt.Println("--------------------------------------------------")
 
+	// --------------------------------------------------
+	// 不正な鍵での検証テスト
+	// --------------------------------------------------
 	wrongKeyPair, err := sencode.GenerateKeyPair()
 	if err != nil {
 		log.Fatalf("偽の鍵ペア生成に失敗しました: %v", err)

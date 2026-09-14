@@ -19,6 +19,10 @@ func GenerateKeyPair() (*ecdsa.PrivateKey, error) {
 	return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 }
 
+// ==========================================
+// エンコード / デコード処理
+// ==========================================
+
 // ECDH 共有鍵の導出
 func deriveSharedSecret(priv *ecdsa.PrivateKey, pub *ecdsa.PublicKey) string {
 	x, _ := priv.Curve.ScalarMult(pub.X, pub.Y, priv.D.Bytes())
